@@ -1,7 +1,7 @@
 import asyncio
 from bleak import BleakClient, BleakScanner
 
-address = "00:04:79:00:0C:13"  # eSense-0091
+# address = "00:04:79:00:0C:13"  # eSense-0091
 MODEL_NBR_UUID = "00002a00-0000-1000-8000-00805f9b34fb"
 IMU_DATA_ENABLE_UUID = "0000ff07-0000-1000-8000-00805f9b34fb"
 IMU_DATA_UUID = "0000ff08-0000-1000-8000-00805f9b34fb"
@@ -12,15 +12,19 @@ def print_data(uuid, data):
     print(f"Data: {data}")
 
 
-async def main(address):
+async def main():
     # Run this to add it to the bluez cache
-    await BleakScanner.discover()
+    devices = await BleakScanner.discover()
+    selected_device = None
+    for device in devices:
+        if device.name == "eSense-0091":
+            selected_device = device.address
 
     # Sometimes there are no services/ characteristics found
 
-    client = BleakClient(address)
+    client = BleakClient(selected_device)
     await client.connect(timeout=100)
-    await client.pair()
+    # await client.pair()
 
     if client.is_connected:
 
@@ -44,7 +48,7 @@ async def main(address):
 
         print("Test the button press...")
         await client.start_notify(BUTTON_UUID, print_data)
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(5.0)
         await client.stop_notify(BUTTON_UUID)
         print("Button test end")
 
@@ -63,4 +67,4 @@ async def main(address):
         print("IMU disabled")
 
 
-asyncio.run(main(address))
+asyncio.run(main())
