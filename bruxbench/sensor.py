@@ -1,15 +1,18 @@
 import adafruit_bno055
 import board
 import grovepi
+import collections
 import asyncio
 from bleak import BleakClient, BleakScanner
+import datetime
 
 
 class Sensor:
     """Interface to ease the data collection"""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, buffer: collections.deque):
         self.name = name
+        self.buffer = buffer
 
     async def read_data(self) -> dict:
         """Should return a dict maping sensor readings with their values,
@@ -22,10 +25,15 @@ class Sensor:
                 ...
             }
         """
-        data = await self._read_data()
-        return {f"{self.name}-{k}": v for k, v in data.items()}
+        data = self._read_data()
+        return data
+        # line = str({f"{self.name}-{k}": v for k, v in data.items()})
+        # return (dt, {f"{self.name}-{k}": v for k, v in data.items()})
 
-    async def _read_data(self) -> dict:
+    def buffer_data(self) -> dict:
+        pass
+
+    def _read_data(self) -> dict:
         """Should return a dict maping sensor readings with their values:
             {
                 ax: 42,
@@ -73,6 +81,7 @@ class IMU_BNO055(Sensor):
             'gravity_x': self.sensor.gravity[0],
             'gravity_y': self.sensor.gravity[1],
             'gravity_z': self.sensor.gravity[2],
+            'dt': datetime.datetime.now().timestamp()
         }
 
 
@@ -102,7 +111,8 @@ class GSR_Grovepi(Sensor):
     async def _read_data(self):
 
         return {
-            'gsr': self.gsr()
+            'gsr': self.gsr(),
+            'dt': datetime.datetime.now().timestamp()
         }
 
 
@@ -112,11 +122,11 @@ class BLE_eSense(Sensor):
     IMU_ENABLE_UUID = "0000ff07-0000-1000-8000-00805f9b34fb"
     IMU_DATA_UUID = "0000ff08-0000-1000-8000-00805f9b34fb"
 
-    def __init__(self, name: str, device_name: str, sample_rate: int = 50):
+    def __init__(self, name: str, device_name: str, buffer: collections.deque, sample_rate: int = 50):
         self.device_name = device_name
         self.sample_rate = sample_rate
         self.raw_data = None
-        super().__init__(name)
+        super().__init__(name, buffer)
 
     async def _init(self):
         """Setup the eSense device. If connection was succesfull,
@@ -136,7 +146,7 @@ class BLE_eSense(Sensor):
 
     async def _start_notifications(self):
         """Start listen to notifications"""
-        await self.client.start_notify(self.IMU_DATA_UUID, self._update_raw_data)
+        await self.client.start_notify(self.IMU_DATA_UUID, self.buffer_data)
 
     async def _find_device(self):
         """Find device by name in the list of discovered devices.
@@ -175,5 +185,9 @@ class BLE_eSense(Sensor):
     async def _read_data(self):
 
         return {
-            'raw_data': self.raw_data
+            'raw_data': self.raw_data,
+            'dt': datetime.datetime.now().timestamp()
         }
+
+    def buffer_data(self, source, data):
+        self.buffer.appendleft(data)
