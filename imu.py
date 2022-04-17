@@ -17,8 +17,12 @@ for channel in range(8):
         tca[channel].unlock()
 
 sensor = adafruit_bno055.BNO055_I2C(tca[0])
+sensor1 = adafruit_bno055.BNO055_I2C(tca[1])
 
 while True:
+    print(sensor1.temperature)
+    print(sensor1.euler)
+    print(sensor1.gravity)
     print(sensor.temperature)
     print(sensor.euler)
     print(sensor.gravity)

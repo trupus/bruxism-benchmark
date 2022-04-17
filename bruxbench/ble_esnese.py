@@ -17,6 +17,7 @@ async def main():
     devices = await BleakScanner.discover()
     selected_device = None
     for device in devices:
+        print(device)
         if device.name == "eSense-0398":
             selected_device = device.address
 
