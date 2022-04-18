@@ -97,10 +97,12 @@ class BLE_eSense(Sensor):
     """Abstract API to read data from the eSense Earable"""
     IMU_ENABLE_UUID = "0000ff07-0000-1000-8000-00805f9b34fb"
     IMU_DATA_UUID = "0000ff08-0000-1000-8000-00805f9b34fb"
+    IMU_SCALE_RANGE_UUID = "0000ff0e-0000-1000-8000-00805f9b34fb"
 
     def __init__(self, name: str, ble_device_name: str, sample_rate: int = 100):
         self.ble_device_name = ble_device_name
         self.sample_rate = sample_rate
+        self.client = None
         super().__init__(name)
 
     async def _init(self):
@@ -108,7 +110,7 @@ class BLE_eSense(Sensor):
         it will listen for IMU notifications
         """
         self.device = await self._find_device()
-        if (self.device):
+        if self.device:
             self.client = BleakClient(self.device)
             await self.client.connect()
             logger.info(
@@ -122,6 +124,7 @@ class BLE_eSense(Sensor):
             await self.client.connect()
             logger.info(
                 f"Reconnected {self.client.address}: {self.client.is_connected}")
+            await self._check_scale_range()
 
             await self.client.write_gatt_char(
                 self.IMU_ENABLE_UUID,
@@ -130,13 +133,24 @@ class BLE_eSense(Sensor):
             logger.info(f"Enabled stream of 100Hz {self.client.address}")
         else:
             logger.info(f"{self.ble_device_name} not found!")
+            # Kill the producer!
+            self.producer.stop_producer()
+
+    async def _check_scale_range(self):
+        scale_range = await self.client.read_gatt_char(self.IMU_SCALE_RANGE_UUID)
+        assert (scale_range[3], scale_range[4], scale_range[5],
+                scale_range[6]) == (0x06, 0x08, 0x08, 0x06)
 
     async def start_stream(self):
         """Start streaming sensor data
         `self.queue(data)` is being passed as a callback
         """
-        logger.info(f"Starting streaming.. {self.client.address}")
-        await self._start_notifications()
+        if self.client == None:
+            return
+
+        if self.client.is_connected:
+            logger.info(f"Starting streaming.. {self.client.address}")
+            await self._start_notifications()
 
     async def _queue(self, source, raw_data):
         """Wrapper to comply with the Bleak BLE callback format
@@ -196,7 +210,8 @@ async def time_bomb(time_s: float, sensors: List[Producer]):
     """
     await asyncio.sleep(time_s)
     for s in sensors:
-        s.producer.stop_producer()
+        if not s.producer.finished_execution.is_set():
+            s.producer.stop_producer()
 
 
 async def main():
