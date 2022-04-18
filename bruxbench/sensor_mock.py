@@ -103,11 +103,11 @@ class BLE_eSense(Sensor):
     IMU_DATA_UUID = "0000ff08-0000-1000-8000-00805f9b34fb"
     IMU_SCALE_RANGE_UUID = "0000ff0e-0000-1000-8000-00805f9b34fb"
 
-    def __init__(self, name: str, ble_device_name: str, sample_rate: int = 100):
+    def __init__(self, name: str, ble_device_name: str, dir_name: str, sample_rate: int = 100):
         self.ble_device_name = ble_device_name
         self.sample_rate = sample_rate
         self.client = None
-        super().__init__(name)
+        super().__init__(name, dir_name)
 
     async def _init(self):
         """Setup the eSense device. If connection was succesfull,
@@ -156,12 +156,28 @@ class BLE_eSense(Sensor):
             logger.info(f"Starting streaming.. {self.client.address}")
             await self._start_notifications()
 
+    def _decode(self, v: bytearray):
+        g = [gx, gy, gz] = [v[4]*256+v[5], v[6]*256+v[7], v[8]*256+v[9]]
+        a = [ax, ay, az] = [v[10]*256+v[11], v[12]*256+v[13], v[14]*256+v[15]]
+
+        a = [(ai / 8192) * 9.80665 for ai in a]
+        g = [gi / 65.5 for gi in g]
+
+        return a, g
+
     async def _queue(self, source, raw_data):
         """Wrapper to comply with the Bleak BLE callback format
         """
+        [[ax, ay, az], [gx, gy, gz]] = self._decode(raw_data)
         data = {
             "dt": now_ms(),
-            "raw_data": raw_data
+            "raw_data": raw_data,
+            'acceleration_x': ax,
+            'acceleration_y': ay,
+            'acceleration_z': az,
+            'gyro_x': gx,
+            'gyro_y': gy,
+            'gyro_z': gz,
         }
         await self.queue(data)
 
@@ -220,9 +236,11 @@ async def time_bomb(time_s: float, sensors: List[Producer]):
 
 async def main(dir_name: str):
     sensors = [
-        Sensor(name="s1", dir_name=dir_name),
-        # BLE_eSense(name="ble1", ble_device_name="eSense-0091"),
-        # BLE_eSense(name="ble2", ble_device_name="eSense-0398"),
+        # Sensor(name="s1", dir_name=dir_name),
+        BLE_eSense(name="ble1", ble_device_name="eSense-0091",
+                   dir_name=dir_name),
+        BLE_eSense(name="ble2", ble_device_name="eSense-0398",
+                   dir_name=dir_name),
     ]
 
     for s in sensors:
