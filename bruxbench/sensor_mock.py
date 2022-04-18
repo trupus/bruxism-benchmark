@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import datetime
 import logging
 import csv
 import os
@@ -27,7 +28,7 @@ class Producer:
 
 class Consumer:
     def __init__(self, dir: str, filename: str, queue: asyncio.Queue, finished_execution: asyncio.Event, csv_headers: list):
-        self.dir = dir
+        self.dir = self._hash_dir_name(dir)
         self.filename = filename
         self.queue = queue
         self.finished_execution = finished_execution
@@ -56,14 +57,17 @@ class Consumer:
 
         f.close()
 
+    def _hash_dir_name(self, dir):
+        return f"{dir}@{datetime.now().strftime('%Y_%m_%d__%H_%M_%S')}"
+
 
 class Sensor:
     """Interface to ease the data collection"""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, dir_name: str):
         self.name = name
         self.producer = Producer()
-        self.consumer = Consumer(dir="p1xyz", filename=f"{self.name}.csv", queue=self.producer.queue,
+        self.consumer = Consumer(dir=dir_name, filename=f"{self.name}.csv", queue=self.producer.queue,
                                  finished_execution=self.producer.finished_execution, csv_headers=["dt"])
 
     async def _init(self):
@@ -214,11 +218,11 @@ async def time_bomb(time_s: float, sensors: List[Producer]):
             s.producer.stop_producer()
 
 
-async def main():
+async def main(dir_name: str):
     sensors = [
-        Sensor(name="sensor1"),
-        BLE_eSense(name="ble1", ble_device_name="eSense-0091"),
-        BLE_eSense(name="ble2", ble_device_name="eSense-0398"),
+        Sensor(name="s1", dir_name=dir_name),
+        # BLE_eSense(name="ble1", ble_device_name="eSense-0091"),
+        # BLE_eSense(name="ble2", ble_device_name="eSense-0398"),
     ]
 
     for s in sensors:
@@ -230,4 +234,5 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(format='%(asctime)s - %(message)s',
                         datefmt='%d.%m.%Y %H:%M:%S', level=logging.INFO)
-    asyncio.run(main())
+    dir_name = "am982512"
+    asyncio.run(main(dir_name))
