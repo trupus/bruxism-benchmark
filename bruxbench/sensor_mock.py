@@ -3,14 +3,14 @@ import time
 import logging
 import csv
 import os
+from typing import List
+from bleak import BleakClient, BleakScanner
 
-logger = logging.getLogger(__name__)
-
-storage = []
+logger = logging.getLogger("sensor")
 
 
-def now():
-    return int(time.time_ns()/1000000)
+def now_ms():
+    return time.time_ns()
 
 
 class Producer:
@@ -18,8 +18,8 @@ class Producer:
         self.queue = asyncio.Queue()
         self.finished_execution = asyncio.Event()
 
-    def produce(self, data):
-        self.queue.put_nowait(data)
+    async def produce(self, data):
+        await self.queue.put(data)
 
     def stop_producer(self):
         self.finished_execution.set()
@@ -50,9 +50,8 @@ class Consumer:
             item = await self.queue.get()
 
             # Print for debug
-            print(item)
-            # await loop.run_in_executor(None, async_write, item)
-            storage.append(item)
+            # print(item)
+            await loop.run_in_executor(None, async_write, item)
             self.queue.task_done()
 
         f.close()
@@ -67,38 +66,153 @@ class Sensor:
         self.consumer = Consumer(dir="p1xyz", filename=f"{self.name}.csv", queue=self.producer.queue,
                                  finished_execution=self.producer.finished_execution, csv_headers=["dt"])
 
-    async def read_data(self) -> dict:
-        """Should return a dict maping sensor readings with their values:
-            {
-                ax: 42,
-                ay: 42,
-                az: 137,
-                gx: 0.8
-                ...
-            }
+    async def _init(self):
+        """Keep the bleak BLE initialisation style
+        If there are methods to be awaited for the sensor initialization, add them here.
+        Later you can call this method in the main loop
+        """
+        pass
+
+    async def start_stream(self):
+        """Start streaming sensor data
+        Should call `self.queue(data)`
         """
         while not self.producer.finished_execution.is_set():
             # Simulate N-Hz sample rate
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(1)
 
             data = {
-                "dt": now()
+                "dt": now_ms()
             }
-            self.producer.produce(data=data)
+
+            await self.queue(data)
+
+    async def queue(self, data):
+        """Abstraction to produce data with the producer
+        """
+        await self.producer.produce(data=data)
 
 
-async def time_bomb(time_s, producer: Producer):
+class BLE_eSense(Sensor):
+    """Abstract API to read data from the eSense Earable"""
+    IMU_ENABLE_UUID = "0000ff07-0000-1000-8000-00805f9b34fb"
+    IMU_DATA_UUID = "0000ff08-0000-1000-8000-00805f9b34fb"
+
+    def __init__(self, name: str, ble_device_name: str, sample_rate: int = 100):
+        self.ble_device_name = ble_device_name
+        self.sample_rate = sample_rate
+        super().__init__(name)
+
+    async def _init(self):
+        """Setup the eSense device. If connection was succesfull,
+        it will listen for IMU notifications
+        """
+        self.device = await self._find_device()
+        if (self.device):
+            self.client = BleakClient(self.device)
+            await self.client.connect()
+            logger.info(
+                f"Connected {self.client.address}: {self.client.is_connected}")
+            await self.client.write_gatt_char(self.IMU_ENABLE_UUID, bytearray([0x57, 0x2d, 0x08, 0x00, 0xc8, 0x01, 0x2c, 0x00, 0x10, 0x00, 0x20]))
+            logger.info(f"Configured for 100Hz {self.client.address}")
+            logger.info(f"Disconnecting {self.client.address}")
+            await self.client.disconnect()
+            logger.info(f"Sleeping.. {self.client.address}")
+            await asyncio.sleep(3)
+            await self.client.connect()
+            logger.info(
+                f"Reconnected {self.client.address}: {self.client.is_connected}")
+
+            await self.client.write_gatt_char(
+                self.IMU_ENABLE_UUID,
+                self._enable_imu_payload()
+            )
+            logger.info(f"Enabled stream of 100Hz {self.client.address}")
+        else:
+            logger.info(f"{self.ble_device_name} not found!")
+
+    async def start_stream(self):
+        """Start streaming sensor data
+        `self.queue(data)` is being passed as a callback
+        """
+        logger.info(f"Starting streaming.. {self.client.address}")
+        await self._start_notifications()
+
+    async def _queue(self, source, raw_data):
+        """Wrapper to comply with the Bleak BLE callback format
+        """
+        data = {
+            "dt": now_ms(),
+            "raw_data": raw_data
+        }
+        await self.queue(data)
+
+    async def _start_notifications(self):
+        """Start listen to notifications"""
+        await self.client.start_notify(self.IMU_DATA_UUID, self._queue)
+
+        while not self.producer.finished_execution.is_set():
+            # Check every 1ms if stream was stopped
+            await asyncio.sleep(0.01)
+
+        await self.client.stop_notify(self.IMU_DATA_UUID)
+        logger.info(f"Stream stoped {self.client.address}")
+        await self.client.disconnect()
+        logger.info(f"Disconnected {self.client.address}")
+
+    async def _find_device(self):
+        """Find device by name in the list of discovered devices.
+        If this part fails try fixes in the following order:
+            1. Restart earable (long press until red, then nothing)
+            2. Hard reset (put in the case, hold case button for 15-20s)
+            3. Power cycle rpi (on very rare ocasions)
+        """
+        devices = await BleakScanner.discover()
+        for device in devices:
+            if device.name == self.ble_device_name:
+                return device
+
+    def _enable_imu_payload(self) -> bytearray:
+        """Refer to eSense BLE specifications.
+        Flips the bit, that enables IMU data broadcast,
+        and also sets the sample rate
+        """
+        return self._imu_payload(True)
+
+    def _imu_payload(self, enable: bool):
+        """Refer to eSense BLE specifications.
+        Helper function to build the required payload
+        """
+        cmd_head = 0x53
+        data_size = 0x02
+        data_enable = int(enable)
+        checksum = (data_size + data_enable + self.sample_rate) & 0xFF
+
+        return bytearray([cmd_head, checksum, data_size, data_enable, self.sample_rate])
+
+
+async def time_bomb(time_s: float, sensors: List[Producer]):
+    """Will activate the stop signal for the producer after `time_s` seconds
+    """
     await asyncio.sleep(time_s)
-    producer.stop_producer()
+    for s in sensors:
+        s.producer.stop_producer()
 
 
 async def main():
-    sensor1 = Sensor(name="sensor1")
-    client_task = sensor1.read_data()
-    consumer_task = sensor1.consumer.consume()
-    time_bomb_task = time_bomb(3, sensor1.producer)
-    await asyncio.gather(client_task, consumer_task, time_bomb_task)
+    sensors = [
+        Sensor(name="sensor1"),
+        BLE_eSense(name="ble1", ble_device_name="eSense-0091"),
+        BLE_eSense(name="ble2", ble_device_name="eSense-0398"),
+    ]
+
+    for s in sensors:
+        await s._init()
+
+    time_bomb_task = time_bomb(3, sensors)
+    await asyncio.gather(*[s.start_stream() for s in sensors], *[s.consumer.consume() for s in sensors], time_bomb_task)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(format='%(asctime)s - %(message)s',
+                        datefmt='%d.%m.%Y %H:%M:%S', level=logging.INFO)
     asyncio.run(main())

@@ -28,7 +28,7 @@ async def prepare_ble_device(client):
 
 async def run_ble_client(client, char_uuid: str, queue: asyncio.Queue):
     async def callback_handler(sender, data):
-        await queue.put((time.time_ns()/1000000, data))
+        await queue.put((time.time_ns(), data))
 
     try:
         address = client.address
@@ -38,7 +38,7 @@ async def run_ble_client(client, char_uuid: str, queue: asyncio.Queue):
         await asyncio.sleep(3.0)
         await client.stop_notify(char_uuid)
         # Send an "exit command to the consumer"
-        await queue.put((time.time_ns()/1000000, None))
+        await queue.put((time.time_ns(), None))
     except Exception as e:
         print(e)
 
@@ -71,37 +71,38 @@ async def run_queue_consumer(queue: asyncio.Queue, address: str):
                 sample_rate_histogram[k] = sample_rate_histogram[k] + 1
             else:
                 sample_rate_histogram[k] = 1
-            # logger.info(
-            #     f"Received callback data via async queue at {epoch}: {data}")
+            logger.info(
+                f"Received callback data via async queue at {epoch}: {data}")
 
 
 async def main(address1: str, address2: str, char_uuid: str):
     # Define buffer
     queue1 = asyncio.Queue()
-    queue2 = asyncio.Queue()
+    # queue2 = asyncio.Queue()
 
     # Definde clients
     client1 = BleakClient(address1)
-    client2 = BleakClient(address2)
+    # client2 = BleakClient(address2)
 
     # Connect to them
     await client1.connect()
-    await client2.connect()
+    # await client2.connect()
 
     # Set them up
     await prepare_ble_device(client1)
-    await prepare_ble_device(client2)
+    # await prepare_ble_device(client2)
 
     client_task1 = run_ble_client(client1, char_uuid, queue1)
     consumer_task1 = run_queue_consumer(queue1, client1.address)
-    client_task2 = run_ble_client(client2, char_uuid, queue2)
-    consumer_task2 = run_queue_consumer(queue2, client2.address)
+    # client_task2 = run_ble_client(client2, char_uuid, queue2)
+    # consumer_task2 = run_queue_consumer(queue2, client2.address)
     start = time.time()
-    await asyncio.gather(client_task1, consumer_task1, client_task2, consumer_task2)
+    await asyncio.gather(client_task1, consumer_task1)
+    # await asyncio.gather(client_task1, consumer_task1, client_task2, consumer_task2)
     end = time.time()
 
     await client1.disconnect()
-    await client2.disconnect()
+    # await client2.disconnect()
 
     logger.info(f"Main method done. Took: {end - start}s")
 
