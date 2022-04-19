@@ -14,7 +14,8 @@ async def main(dir_name, halt_event):
         BLE_eSense(name="ble-right", ble_device_name="eSense-0398"),
         IMU_BNO055(name="left_imu", i2c_multiplexer_index=0),
         IMU_BNO055(name="right_imu", i2c_multiplexer_index=1),
-        GSR_Grovepi(name="gsr")
+        GSR_Grovepi(name="gsr"),
+        EMG_Olimex_x4(name="emg")
         # ...
     ]
 

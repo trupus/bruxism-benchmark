@@ -322,3 +322,6 @@ class EMG_Olimex_x4(Sensor):
     async def get_data(self):
         # TODO:
         return super().get_data()
+
+
+# TODO: Audio recorder (adapt implementation from the test notebook)
