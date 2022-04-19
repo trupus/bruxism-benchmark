@@ -3,7 +3,7 @@ import logging
 from typing import List
 from sensor import Sensor
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("bruxi")
 
 
 class Bruxi:

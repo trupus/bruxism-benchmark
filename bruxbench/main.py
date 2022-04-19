@@ -12,6 +12,9 @@ async def main(dir_name, halt_event):
         Sensor(name="mock-s1"),
         BLE_eSense(name="ble-left", ble_device_name="eSense-0091"),
         BLE_eSense(name="ble-right", ble_device_name="eSense-0398"),
+        IMU_BNO055(name="left_imu", i2c_multiplexer_index=0),
+        IMU_BNO055(name="right_imu", i2c_multiplexer_index=1),
+        GSR_Grovepi(name="gsr")
         # ...
     ]
 

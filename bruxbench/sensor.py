@@ -5,6 +5,11 @@ from asyncio import sleep
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from reactor import Producer, Consumer
+from busio import I2C
+from board import SCL, SDA
+from adafruit_bno055 import BNO055_I2C
+from adafruit_tca9548a import TCA9548A
+from grovepi import analogRead, pinMode
 
 logger = getLogger("sensor")
 
@@ -18,8 +23,9 @@ def now_ms():
 class Sensor:
     """Interface to ease the data collection"""
 
-    def __init__(self, name: str, csv_headers: List[str] = ["dt"]):
+    def __init__(self, name: str, sample_rate_s: float = 1, csv_headers: List[str] = ["dt"]):
         self.name = name
+        self.sample_rate_ms = sample_rate_s
         self.producer = Producer()
         self.consumer = Consumer(filename=f"{self.name}.csv", queue=self.producer.queue,
                                  finished_execution=self.producer.finished_execution, csv_headers=csv_headers)
@@ -31,17 +37,22 @@ class Sensor:
         """
         pass
 
+    def get_data(self):
+        """Override this method with proper pyshical sensor read
+        """
+        return {
+            "dt": now_ms()
+        }
+
     async def start_stream(self):
         """Start streaming sensor data
         Should call `self.queue(data)`
         """
         while not self.producer.finished_execution.is_set():
             # Simulate N-Hz sample rate
-            await sleep(1)
+            await sleep(self.sample_rate_s)
 
-            data = {
-                "dt": now_ms()
-            }
+            data = self.get_data()
 
             await self.queue(data)
 
@@ -200,3 +211,114 @@ class BLE_eSense(Sensor):
         checksum = (data_size + data_enable + self.sample_rate) & 0xFF
 
         return bytearray([cmd_head, checksum, data_size, data_enable, self.sample_rate])
+
+
+class IMU_BNO055(Sensor):
+    """Abstract API to read data from BNO055"""
+
+    # I2C singleton interface
+    i2c = I2C(SCL, SDA)
+    tca = TCA9548A(i2c)
+
+    def __init__(self, name: str, i2c_multiplexer_index: int):
+        self.sensor = BNO055_I2C(self.tca[i2c_multiplexer_index])
+        super().__init__(name=name, sample_rate_s=0.01, csv_headers=[
+            'dt',
+            'acceleration_x',
+            'acceleration_y',
+            'acceleration_z',
+            'magnetic_x',
+            'magnetic_y',
+            'magnetic_z',
+            'gyro_x',
+            'gyro_y',
+            'gyro_z',
+            'euler_x',
+            'euler_y',
+            'euler_z',
+            'quaternion_a',
+            'quaternion_b',
+            'quaternion_c',
+            'quaternion_d',
+            'linear_acceleration_x',
+            'linear_acceleration_y',
+            'linear_acceleration_z',
+            'gravity_x',
+            'gravity_y',
+            'gravity_z'
+        ])
+
+    async def get_data(self):
+        return {
+            'dt': now_ms(),
+            'acceleration_x': self.sensor.acceleration[0],
+            'acceleration_y': self.sensor.acceleration[1],
+            'acceleration_z': self.sensor.acceleration[2],
+            'magnetic_x': self.sensor.magnetic[0],
+            'magnetic_y': self.sensor.magnetic[1],
+            'magnetic_z': self.sensor.magnetic[2],
+            'gyro_x': self.sensor.gyro[0],
+            'gyro_y': self.sensor.gyro[1],
+            'gyro_z': self.sensor.gyro[2],
+            'euler_x': self.sensor.euler[0],
+            'euler_y': self.sensor.euler[1],
+            'euler_z': self.sensor.euler[2],
+            'quaternion_a': self.sensor.quaternion[0],
+            'quaternion_b': self.sensor.quaternion[1],
+            'quaternion_c': self.sensor.quaternion[2],
+            'quaternion_d': self.sensor.quaternion[3],
+            'linear_acceleration_x': self.sensor.linear_acceleration[0],
+            'linear_acceleration_y': self.sensor.linear_acceleration[1],
+            'linear_acceleration_z': self.sensor.linear_acceleration[2],
+            'gravity_x': self.sensor.gravity[0],
+            'gravity_y': self.sensor.gravity[1],
+            'gravity_z': self.sensor.gravity[2]
+        }
+
+
+class GSR_Grovepi(Sensor):
+    """Abstract API to read data from the Grove GSR"""
+
+    # Maps port name to physical pin number
+    PORT_TO_PIN = {
+        "A0": 14
+    }
+
+    def __init__(self, name: str, port: str = "A0"):
+        self.pin = self.PORT_TO_PIN[port]
+        super().__init__(name=name, sample_rate_s=0.01, csv_headers=[
+            'dt',
+            'gsr'
+        ])
+
+    def _setup_read(self):
+        """Sets the grovepi+ hat board to input mode"""
+
+        pinMode(self.pin, "INPUT")
+
+    def _gsr(self):
+        """Reads the gsr value"""
+
+        self._setup_read()
+        return analogRead(self.pin)
+
+    async def get_data(self):
+        return {
+            'dt': now_ms(),
+            'gsr': self._gsr(),
+        }
+
+
+class EMG_Olimex_x4(Sensor):
+    def __init__(self, name: str):
+        super().__init__(name=name, sample_rate_s=0.01, csv_headers=[
+            'dt',
+            'masseter_left',
+            'masseter_right',
+            'temporalis_left',
+            'temporalis_right',
+        ])
+
+    async def get_data(self):
+        # TODO:
+        return super().get_data()
