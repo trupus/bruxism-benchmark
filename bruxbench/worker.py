@@ -1,5 +1,5 @@
 import asyncio
-from sensor import BLE_eSense
+from bruxbench.sensor_old import BLE_eSense
 import collections  # for the buffer
 import time  # to ease polling
 import gevent
