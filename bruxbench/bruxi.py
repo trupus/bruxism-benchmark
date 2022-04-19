@@ -28,7 +28,7 @@ class Bruxi:
     async def halt_event_listener(self) -> None:
         while True:
             if self.halt_event.is_set():
-                logger.info("\n\nHalt received! Shuting down..")
+                logger.info("Halt received! Shuting down..")
                 for s in self.sensors:
                     if not s.producer.finished_execution.is_set():
                         s.producer.stop_producer()

@@ -15,11 +15,16 @@ async def main(dir_name, halt_event):
         # ...
     ]
 
-    dir_name = sys.argv[1]
-
     device = Bruxi(dir_name=dir_name, sensors=SENSORS, halt_event=halt_event)
+
+    logger.info(
+        f"Initialising {len(device.sensors)}/ {len(SENSORS)} sensors..")
     await device.initialize_sensors()
+    logger.info("Done.")
+
+    logger.info("Spawning workers..")
     await asyncio.gather(*device.spawn_coroutines())
+    logger.info("All workers exited.")
 
 
 if __name__ == "__main__":
