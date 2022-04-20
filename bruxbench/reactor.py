@@ -33,7 +33,7 @@ class Consumer:
                 self.queue.task_done()
 
     def set_dir_name(self, dir):
-        self.dir = self._hash_dir_name(dir)
+        self.dir = f"out/{self._hash_dir_name(dir)}"
         self._init_out_file()
 
     def _init_out_file(self):

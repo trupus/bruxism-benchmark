@@ -25,7 +25,7 @@ class Sensor:
 
     def __init__(self, name: str, sample_rate_s: float = 1, csv_headers: List[str] = ["dt"]):
         self.name = name
-        self.sample_rate_ms = sample_rate_s
+        self.sample_rate_s = sample_rate_s
         self.producer = Producer()
         self.consumer = Consumer(filename=f"{self.name}.csv", queue=self.producer.queue,
                                  finished_execution=self.producer.finished_execution, csv_headers=csv_headers)
