@@ -1,3 +1,4 @@
+import serial
 from time import time_ns
 from logging import getLogger
 from typing import List
@@ -174,7 +175,7 @@ class BLE_eSense(Sensor):
         await self.client.start_notify(self.IMU_DATA_UUID, self._queue)
 
         while not self.producer.finished_execution.is_set():
-            # Check every 1ms if stream was stopped
+            # Check every 10ms if stream was stopped
             await sleep(0.01)
 
         await self.client.stop_notify(self.IMU_DATA_UUID)
@@ -310,8 +311,13 @@ class GSR_Grovepi(Sensor):
 
 
 class EMG_Olimex_x4(Sensor):
-    def __init__(self, name: str):
-        super().__init__(name=name, sample_rate_s=0.01, csv_headers=[
+    def __init__(self, name: str, baudrate: int = 115200):
+        self.ser = serial.Serial('/dev/ttyACM0', baudrate=baudrate,
+                                 parity=serial.PARITY_NONE,
+                                 stopbits=serial.STOPBITS_ONE,
+                                 bytesize=serial.EIGHTBITS, timeout=1)
+        self.ser.reset_input_buffer()
+        super().__init__(name=name, sample_rate_s=0, csv_headers=[
             'dt',
             'masseter_left',
             'masseter_right',
@@ -320,8 +326,14 @@ class EMG_Olimex_x4(Sensor):
         ])
 
     async def get_data(self):
-        # TODO:
-        return super().get_data()
+        data = self.ser.readline().decode('utf8').rstrip().split(',')
+        return {
+            'dt': now_ms(),
+            'masseter_left': data[0],
+            'masseter_right': data[1],
+            'temporalis_left': data[2],
+            'temporalis_right': data[3],
+        }
 
 
 # TODO: Audio recorder (adapt implementation from the test notebook)
