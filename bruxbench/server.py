@@ -38,8 +38,8 @@ def error_event(msg):
     return json.dumps({"error": {"message": msg}})
 
 
-async def stream(limit):
-    while True:
+async def stream(limit, halt_event):
+    while not halt_event.is_set():
         if DIR_TO_STREAM != None:
             list_of_files = glob.glob(f"./out/{DIR_TO_STREAM}/*")
 
@@ -63,7 +63,7 @@ async def stream(limit):
         await asyncio.sleep(1)
 
 
-async def counter(websocket):
+async def event_listener(websocket):
     global CONNECTIONS
     try:
         # Register user
@@ -87,14 +87,22 @@ async def counter(websocket):
                 logging.error(error_msg)
 
         await websocket.wait_closed()
+    except Exception as e:
+        logging.error(e)
     finally:
         # Unregister user
         CONNECTIONS.remove(websocket)
 
 
-async def main():
-    async with websockets.serve(counter, "0", 5678):
-        await stream(1)  # run forever
+async def main(halt_event):
+    async with websockets.serve(event_listener, "0", 5678):
+        await stream(limit=100, halt_event=halt_event)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    halt_event = asyncio.Event()
+
+    try:
+        asyncio.run(main(halt_event=halt_event))
+    except KeyboardInterrupt:
+        logging.warning("Halt received! Shuting down..")
+        halt_event.set()
