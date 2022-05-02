@@ -24,7 +24,7 @@ def now_ms():
 class Sensor:
     """Interface to ease the data collection"""
 
-    def __init__(self, name: str, sample_rate_s: float = 1, csv_headers: List[str] = ["dt"]):
+    def __init__(self, name: str, sample_rate_s: float = 1, csv_headers: List[str] = ["dt", "column0"]):
         self.name = name
         self.sample_rate_s = sample_rate_s
         self.producer = Producer()
@@ -42,7 +42,8 @@ class Sensor:
         """Override this method with proper pyshical sensor read
         """
         return {
-            "dt": now_ms()
+            "dt": now_ms(),
+            "column0": 42
         }
 
     async def start_stream(self):
