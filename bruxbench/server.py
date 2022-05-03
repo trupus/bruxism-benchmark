@@ -14,7 +14,7 @@ DIR_TO_STREAM = None
 
 
 def get_dirs():
-    return json.dumps({"dirs": next(os.walk('./out'))[1]})
+    return json.dumps({"type": "dirs", "dirs": next(os.walk('./out'))[1]})
 
 
 def start_stream(dir_to_stream):
@@ -25,7 +25,7 @@ def start_stream(dir_to_stream):
     headers = {
         f"{file_path.split('/')[-1].split('.')[0]}": next(open(file_path, 'r')).replace('\n', '').split(',') for file_path in list_of_files
     }
-    return json.dumps({"success": {"message": f"Starting streaming {dir_to_stream}", "headers": headers}})
+    return json.dumps({"success": {"message": f"Starting streaming {dir_to_stream}"}, "headers": headers, "type": "headers"})
 
 
 def stop_stream():
@@ -43,20 +43,25 @@ async def stream(limit, halt_event):
         if DIR_TO_STREAM != None:
             list_of_files = glob.glob(f"./out/{DIR_TO_STREAM}/*")
 
-            with open(list_of_files[0], 'r') as f:
-                lines = f.readlines()
+            if len(list_of_files) > 0:
+                with open(list_of_files[0], 'r') as f:
+                    lines = f.readlines()
 
-            data = []
-            if len(lines) < limit + 1:
-                data = lines[1:]
+                data = []
+                if len(lines) < limit + 1:
+                    data = lines[1:]
+                else:
+                    data = lines[-limit:]
+                payload = {
+                    f"{file_path.split('/')[-1].split('.')[0]}": [d.replace('\n', '').split(',') for d in data] for file_path in list_of_files
+                }
+
+                message = json.dumps(
+                    {"success": {"message": "Streaming.."}, "payload": payload, "type": "payload"})
+                websockets.broadcast(CONNECTIONS, message)
+
             else:
-                data = lines[-limit:]
-            payload = {
-                f"{file_path.split('/')[-1].split('.')[0]}": [d.replace('\n', '').split(',') for d in data] for file_path in list_of_files
-            }
-
-            message = json.dumps(payload)
-            websockets.broadcast(CONNECTIONS, message)
+                websockets.broadcast(CONNECTIONS, stop_stream())
 
         # 60Hz polling rate
         # await asyncio.sleep(0.0166)
@@ -95,7 +100,7 @@ async def event_listener(websocket):
 
 
 async def main(halt_event):
-    async with websockets.serve(event_listener, "0", 5678):
+    async with websockets.serve(event_listener, "0", 1337):
         await stream(limit=100, halt_event=halt_event)
 
 if __name__ == "__main__":
