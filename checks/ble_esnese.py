@@ -17,7 +17,7 @@ def print_data(uuid, data, offset):
 
 
 def _from_bytes(bytes_pair):
-    return int.from_bytes(bytes_pair, 'little', signed=True)
+    return int.from_bytes(bytes_pair, 'big', signed=True)
 
 
 def decode(v, offset):
@@ -36,7 +36,8 @@ def decode_offset(v):
     g = [_from_bytes(v[3:5]), _from_bytes(v[5:7]), _from_bytes(v[7:9])]
     a = [_from_bytes(v[9:11]), _from_bytes(v[11:13]), _from_bytes(v[13:15])]
 
-    return [a, g]
+    # return [a, g]
+    return [[0, 0, 0], [0, 0, 0]]
 
 
 async def on_connect(client):

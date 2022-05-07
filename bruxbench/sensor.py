@@ -76,7 +76,7 @@ class BLE_eSense(Sensor):
         self.client = None
         super().__init__(name=name, csv_headers=[
             "dt",
-            "raw_data",
+            # "raw_data",
             'acceleration_x',
             'acceleration_y',
             'acceleration_z',
@@ -147,11 +147,15 @@ class BLE_eSense(Sensor):
         The resulting units are m/s^2 and deg/s respectively
         The axis for acc and gyro are in the order `x, y, z`
         """
-        g = [v[4]*256+v[5], v[6]*256+v[7], v[8]*256+v[9]]
-        a = [v[10]*256+v[11], v[12]*256+v[13], v[14]*256+v[15]]
+        def _from_bytes(bytes_pair):
+            return int.from_bytes(bytes_pair, 'big', signed=True)
 
+        g = [_from_bytes(v[4:6]), _from_bytes(v[6:8]), _from_bytes(v[8:10])]
+        a = [_from_bytes(v[10:12]), _from_bytes(
+            v[12:14]), _from_bytes(v[14:16])]
+
+        a = [ai / 8192 for ai in a]
         g = [gi / 65.5 for gi in g]
-        a = [(ai / 8192) * 9.80665 for ai in a]
 
         return a, g
 
@@ -161,7 +165,7 @@ class BLE_eSense(Sensor):
         [[ax, ay, az], [gx, gy, gz]] = self._decode(raw_data)
         data = {
             "dt": now_ms(),
-            "raw_data": raw_data,
+            # "raw_data": raw_data,
             'acceleration_x': ax,
             'acceleration_y': ay,
             'acceleration_z': az,

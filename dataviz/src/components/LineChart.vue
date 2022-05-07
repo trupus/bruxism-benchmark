@@ -15,7 +15,7 @@
 </template>
 
 <script>
-import { defineComponent, h } from "vue";
+import zoomPlugin from "chartjs-plugin-zoom";
 
 import { Line } from "vue-chartjs";
 import {
@@ -36,7 +36,8 @@ ChartJS.register(
   LineElement,
   LinearScale,
   PointElement,
-  CategoryScale
+  CategoryScale,
+  zoomPlugin
 );
 
 export default {
@@ -76,7 +77,7 @@ export default {
     datasets: {
       type: Array,
       default: () => [],
-    }
+    },
   },
   computed: {
     chartData() {
@@ -97,7 +98,18 @@ export default {
         },
         plugins: {
           tooltip: {
-            enabled: false,
+            enabled: true,
+          },
+          zoom: {
+            zoom: {
+              wheel: {
+                enabled: true,
+              },
+              pinch: {
+                enabled: true,
+              },
+              mode: "xy",
+            },
           },
         },
       };

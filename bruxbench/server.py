@@ -89,14 +89,18 @@ async def stream(limit, halt_event):
                     chart_data['labels'] = [row[0] for row in rows]
 
                     # line data per column
-                    chart_data['datasets'] = [
-                        {
-                            'label': HEADERS_MAP[sensor_file_hash][col_i],
-                            'data': [row[col_i] for row in rows],
-                            'backgroundColor': BACKGROUND_COLORS[col_i - 1],
-                            'borderColor': LINE_COLORS[col_i - 1]
-                        } for col_i in range(1, len(HEADERS_MAP[sensor_file_hash]))
-                    ]
+                    try:
+                        chart_data['datasets'] = [
+                            {
+                                'label': HEADERS_MAP[sensor_file_hash][col_i],
+                                'data': [row[col_i] for row in rows],
+                                'backgroundColor': BACKGROUND_COLORS[col_i - 1],
+                                'borderColor': LINE_COLORS[col_i - 1]
+                            } for col_i in range(1, len(HEADERS_MAP[sensor_file_hash]))
+                        ]
+                    except Exception as e:
+                        logging.error(e)
+                        chart_data['datasets'] = []
 
                     payload[sensor_file_hash] = chart_data
 
