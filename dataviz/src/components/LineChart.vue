@@ -1,7 +1,10 @@
 <template>
   <div>
-    {{ chartId }}
+    <div class="boundaries">
+      {{ chartId }}
+    </div>
     <Line
+      :key="componentKey"
       :chartData="chartData"
       :chartOptions="chartOptions"
       :chartId="chartId"
@@ -11,6 +14,14 @@
       :styles="styles"
       :plugins="plugins"
     />
+    <div class="boundaries">
+      <div>
+        min: <input type="number" v-model="y_min">
+      </div>
+      <div>
+        max: <input type="number" v-model="y_max">
+      </div>
+    </div>
   </div>
 </template>
 
@@ -77,7 +88,14 @@ export default {
     datasets: {
       type: Array,
       default: () => [],
-    },
+    }
+  },
+  data: function() {
+    return {
+      y_min: -30,
+      y_max: 30,
+      componentKey: 0
+    }
   },
   computed: {
     chartData() {
@@ -91,6 +109,16 @@ export default {
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
+        spanGaps: true,
+        scales: {
+          y: {
+            min: this.y_min,
+            max: this.y_max,
+          },
+          x: {
+            display: false
+          }
+        },
         elements: {
           point: {
             radius: 0,
@@ -103,10 +131,10 @@ export default {
           zoom: {
             zoom: {
               wheel: {
-                enabled: true,
+                enabled: false,
               },
               pinch: {
-                enabled: true,
+                enabled: false,
               },
               mode: "xy",
             },
@@ -115,5 +143,17 @@ export default {
       };
     },
   },
+  watch: {
+    chartOptions: function() {
+        this.componentKey += 1;
+     },
+  },
 };
 </script>
+
+<style lang="scss" scoped>
+.boundaries {
+  display: flex;
+  justify-content: space-around;
+}
+</style>
