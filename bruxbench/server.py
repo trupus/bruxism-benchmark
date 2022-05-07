@@ -3,14 +3,13 @@ import json
 import logging
 import websockets
 import os
-import datetime
 import glob
-import numpy as np
 
 logging.basicConfig()
 
 CONNECTIONS = set()
 DIR_TO_STREAM = None
+HEADERS_MAP = {}
 
 
 def get_dirs():
@@ -19,13 +18,14 @@ def get_dirs():
 
 def start_stream(dir_to_stream):
     global DIR_TO_STREAM
+    global HEADERS_MAP
     DIR_TO_STREAM = dir_to_stream
 
     list_of_files = glob.glob(f"./out/{DIR_TO_STREAM}/*")
-    headers = {
-        f"{file_path.split('/')[-1].split('.')[0]}": next(open(file_path, 'r')).replace('\n', '').split(',') for file_path in list_of_files
-    }
-    return json.dumps({"success": {"message": f"Starting streaming {dir_to_stream}"}, "headers": headers, "type": "headers"})
+    HEADERS_MAP = {file_path.split('/')[-1].split('.')[0]: next(open(
+        file_path, 'r')).replace('\n', '').split(',') for file_path in list_of_files}
+
+    return json.dumps({"success": {"message": f"Starting streaming {dir_to_stream}"}})
 
 
 def stop_stream():
@@ -44,17 +44,23 @@ async def stream(limit, halt_event):
             list_of_files = glob.glob(f"./out/{DIR_TO_STREAM}/*")
 
             if len(list_of_files) > 0:
-                with open(list_of_files[0], 'r') as f:
-                    lines = f.readlines()
+                payload = {}
+                for sensor_file in list_of_files:
+                    with open(sensor_file, 'r') as f:
+                        lines = f.readlines()
 
-                data = []
-                if len(lines) < limit + 1:
-                    data = lines[1:]
-                else:
-                    data = lines[-limit:]
-                payload = {
-                    f"{file_path.split('/')[-1].split('.')[0]}": [d.replace('\n', '').split(',') for d in data] for file_path in list_of_files
-                }
+                    data = []
+                    if len(lines) < limit + 1:
+                        data = lines[1:]
+                    else:
+                        data = lines[-limit:]
+
+                    sensor_file_hash = sensor_file.split('/')[-1].split('.')[0]
+                    data = [d.replace('\n', '').split(',') for d in data]
+                    data = [{HEADERS_MAP[sensor_file_hash][col_i]: columns[col_i]
+                             for col_i in range(len(columns))} for columns in data]
+
+                    payload[sensor_file_hash] = data
 
                 message = json.dumps(
                     {"success": {"message": "Streaming.."}, "payload": payload, "type": "payload"})

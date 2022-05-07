@@ -43,7 +43,7 @@ class Sensor:
         """
         return {
             "dt": now_ms(),
-            "column0": 42
+            "column0": 42.0
         }
 
     async def start_stream(self):

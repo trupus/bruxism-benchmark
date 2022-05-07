@@ -37,7 +37,6 @@ export default {
       connection: null,
       dirs: [],
       payload: null,
-      headers: null,
       successMessage: "",
       errorMessage: "",
     };
@@ -55,8 +54,6 @@ export default {
             break;
           case "payload":
             this.payload = data.payload;
-          case "headers":
-            this.headers = data.headers;
           default:
             break;
         }
@@ -78,7 +75,7 @@ export default {
       this.connection.onmessage = this.eventHandler;
 
       this.connection.onopen = function (event) {
-        console.log("Successfully connected to the echo websocket server...");
+        this.successMessage= "Successfully connected to the websocket server";
       };
     },
   },
