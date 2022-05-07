@@ -23,15 +23,27 @@
         </button>
       </div>
       <div>
-        {{ payload }}
+        <!-- graphs here -->
+        <div class="container" v-if="payload">
+          <LineChart
+            v-for="(chartData, sensorName) in payload"
+            :key="sensorName"
+            :labels="chartData.labels"
+            :datasets="chartData.datasets"
+            :chartId="sensorName"
+          />
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script>
+import LineChart from "@/components/LineChart.vue";
+
 export default {
   name: "App",
+  components: { LineChart },
   data: function () {
     return {
       connection: null,
@@ -70,12 +82,15 @@ export default {
     makeConnection() {
       this.successMessage = "";
       this.errorMessage = "";
+
       this.connection = new WebSocket("ws://192.168.2.2:1337");
 
       this.connection.onmessage = this.eventHandler;
-
       this.connection.onopen = function (event) {
-        this.successMessage= "Successfully connected to the websocket server";
+        this.successMessage = "Successfully connected to the websocket server";
+      };
+      this.connection.onerror = function (event) {
+        this.errorMessage = JSON.stringify(event);
       };
     },
   },
@@ -93,5 +108,11 @@ export default {
 
 .d-flex-row {
   display: flex;
+}
+
+.container {
+  display: grid;
+  grid-template-columns: 33% 33% 33%;
+  grid-template-rows: auto;
 }
 </style>

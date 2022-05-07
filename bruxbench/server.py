@@ -10,6 +10,29 @@ logging.basicConfig()
 CONNECTIONS = set()
 DIR_TO_STREAM = None
 HEADERS_MAP = {}
+LINE_COLORS = [
+    "#3366CC",
+    "#DC3912",
+    "#FF9900",
+    "#109618",
+    "#990099",
+    "#3B3EAC",
+    "#0099C6",
+    "#DD4477",
+    "#66AA00",
+    "#B82E2E",
+    "#316395",
+    "#994499",
+    "#22AA99",
+    "#AAAA11",
+    "#6633CC",
+    "#E67300",
+    "#8B0707",
+    "#329262",
+    "#5574A6",
+    "#3B3EAC"
+]
+BACKGROUND_COLORS = [line_color + "99" for line_color in LINE_COLORS]
 
 
 def get_dirs():
@@ -46,21 +69,36 @@ async def stream(limit, halt_event):
             if len(list_of_files) > 0:
                 payload = {}
                 for sensor_file in list_of_files:
+                    chart_data = {
+                        'labels': [],
+                        'datasets': []
+                    }
+
                     with open(sensor_file, 'r') as f:
                         lines = f.readlines()
-
-                    data = []
+                    rows = []
                     if len(lines) < limit + 1:
-                        data = lines[1:]
+                        rows = lines[1:]
                     else:
-                        data = lines[-limit:]
+                        rows = lines[-limit:]
 
                     sensor_file_hash = sensor_file.split('/')[-1].split('.')[0]
-                    data = [d.replace('\n', '').split(',') for d in data]
-                    data = [{HEADERS_MAP[sensor_file_hash][col_i]: columns[col_i]
-                             for col_i in range(len(columns))} for columns in data]
+                    rows = [row.replace('\n', '').split(',') for row in rows]
 
-                    payload[sensor_file_hash] = data
+                    # X axis
+                    chart_data['labels'] = [row[0] for row in rows]
+
+                    # line data per column
+                    chart_data['datasets'] = [
+                        {
+                            'label': HEADERS_MAP[sensor_file_hash][col_i],
+                            'data': [row[col_i] for row in rows],
+                            'backgroundColor': BACKGROUND_COLORS[col_i - 1],
+                            'borderColor': LINE_COLORS[col_i - 1]
+                        } for col_i in range(1, len(HEADERS_MAP[sensor_file_hash]))
+                    ]
+
+                    payload[sensor_file_hash] = chart_data
 
                 message = json.dumps(
                     {"success": {"message": "Streaming.."}, "payload": payload, "type": "payload"})
@@ -70,8 +108,8 @@ async def stream(limit, halt_event):
                 websockets.broadcast(CONNECTIONS, stop_stream())
 
         # 60Hz polling rate
-        # await asyncio.sleep(0.0166)
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.0166)
+        # await asyncio.sleep(1)
 
 
 async def event_listener(websocket):
