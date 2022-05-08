@@ -4,8 +4,63 @@ import logging
 import websockets
 import os
 import glob
+import itertools
+import io
 
 logging.basicConfig()
+
+
+class ReverseFile(io.IOBase):
+    def __init__(self, filename, headers=1):
+        self.fp = open(filename)
+        self.headers = headers
+        self.reverse = self.reversed_lines()
+        self.end_position = -1
+        self.current_position = -1
+
+    def readline(self, size=-1):
+        if self.headers > 0:
+            self.headers -= 1
+            raw = self.fp.readline(size)
+            self.end_position = self.fp.tell()
+            return raw
+
+        raw = next(self.reverse)
+        if self.current_position > self.end_position:
+            return raw
+
+        raise StopIteration
+
+    def reversed_lines(self):
+        """Generate the lines of file in reverse order.
+        """
+        part = ''
+        for block in self.reversed_blocks():
+            block = block + part
+            block = block.split('\n')
+            block.reverse()
+            part = block.pop()
+            if block[0] == '':
+                block.pop(0)
+
+            for line in block:
+                yield line + '\n'
+
+        if part:
+            yield part
+
+    def reversed_blocks(self, blocksize=0xFFFF):
+        "Generate blocks of file's contents in reverse order."
+        file = self.fp
+        file.seek(0, os.SEEK_END)
+        here = file.tell()
+        while 0 < here:
+            delta = min(blocksize, here)
+            here -= delta
+            file.seek(here, os.SEEK_SET)
+            self.current_position = file.tell()
+            yield file.read(delta)
+
 
 CONNECTIONS = set()
 DIR_TO_STREAM = None
@@ -69,21 +124,20 @@ async def stream(limit, halt_event):
             if len(list_of_files) > 0:
                 payload = {}
                 for sensor_file in list_of_files:
+                    sensor_file_hash = sensor_file.split('/')[-1].split('.')[0]
                     chart_data = {
                         'labels': [],
                         'datasets': []
                     }
 
-                    with open(sensor_file, 'r') as f:
-                        lines = f.readlines()
-                    rows = []
-                    if len(lines) < limit + 1:
-                        rows = lines[1:]
-                    else:
-                        rows = lines[-limit:]
+                    rev = ReverseFile(sensor_file)
+                    lines = list(itertools.islice(rev, limit))[::-1]
+                    if len(lines) == 0:
+                        continue
 
-                    sensor_file_hash = sensor_file.split('/')[-1].split('.')[0]
-                    rows = [row.replace('\n', '').split(',') for row in rows]
+                    rows = [row.rstrip('\n').split(',') for row in lines]
+                    if 'dt' == rows[0][0]:
+                        rows = rows[1:]
 
                     # X axis
                     chart_data['labels'] = [row[0] for row in rows]
