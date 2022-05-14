@@ -6,16 +6,12 @@ from asyncio import sleep
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from reactor import Producer, Consumer
-from busio import I2C
-from board import SCL, SDA
-from adafruit_bno055 import BNO055_I2C
-from adafruit_tca9548a import TCA9548A
 from grovepi import analogRead, pinMode
 
 logger = getLogger("sensor")
 
 
-def now_ms():
+def now():
     """Helper function to get the POSIX time in ms for the current moment
     """
     return time_ns()
@@ -42,7 +38,7 @@ class Sensor:
         """Override this method with proper pyshical sensor read
         """
         return {
-            "dt": now_ms(),
+            "dt": now(),
             "column0": 42.0
         }
 
@@ -164,7 +160,7 @@ class BLE_eSense(Sensor):
         """
         [[ax, ay, az], [gx, gy, gz]] = self._decode(raw_data)
         data = {
-            "dt": now_ms(),
+            "dt": now(),
             # "raw_data": raw_data,
             'acceleration_x': ax,
             'acceleration_y': ay,
@@ -219,67 +215,67 @@ class BLE_eSense(Sensor):
         return bytearray([cmd_head, checksum, data_size, data_enable, self.sample_rate])
 
 
-class IMU_BNO055(Sensor):
-    """Abstract API to read data from BNO055"""
+# class IMU_BNO055(Sensor):
+#     """Abstract API to read data from BNO055"""
 
-    # I2C singleton interface
-    i2c = I2C(SCL, SDA)
-    tca = TCA9548A(i2c)
+#     # I2C singleton interface
+#     i2c = I2C(SCL, SDA)
+#     tca = TCA9548A(i2c)
 
-    def __init__(self, name: str, i2c_multiplexer_index: int):
-        self.sensor = BNO055_I2C(self.tca[i2c_multiplexer_index])
-        super().__init__(name=name, sample_rate_s=0.01, csv_headers=[
-            'dt',
-            'acceleration_x',
-            'acceleration_y',
-            'acceleration_z',
-            'magnetic_x',
-            'magnetic_y',
-            'magnetic_z',
-            'gyro_x',
-            'gyro_y',
-            'gyro_z',
-            'euler_x',
-            'euler_y',
-            'euler_z',
-            'quaternion_a',
-            'quaternion_b',
-            'quaternion_c',
-            'quaternion_d',
-            'linear_acceleration_x',
-            'linear_acceleration_y',
-            'linear_acceleration_z',
-            'gravity_x',
-            'gravity_y',
-            'gravity_z'
-        ])
+#     def __init__(self, name: str, i2c_multiplexer_index: int):
+#         self.sensor = BNO055_I2C(self.tca[i2c_multiplexer_index])
+#         super().__init__(name=name, sample_rate_s=0.01, csv_headers=[
+#             'dt',
+#             'acceleration_x',
+#             'acceleration_y',
+#             'acceleration_z',
+#             'magnetic_x',
+#             'magnetic_y',
+#             'magnetic_z',
+#             'gyro_x',
+#             'gyro_y',
+#             'gyro_z',
+#             'euler_x',
+#             'euler_y',
+#             'euler_z',
+#             'quaternion_a',
+#             'quaternion_b',
+#             'quaternion_c',
+#             'quaternion_d',
+#             'linear_acceleration_x',
+#             'linear_acceleration_y',
+#             'linear_acceleration_z',
+#             'gravity_x',
+#             'gravity_y',
+#             'gravity_z'
+#         ])
 
-    async def get_data(self):
-        return {
-            'dt': now_ms(),
-            'acceleration_x': self.sensor.acceleration[0],
-            'acceleration_y': self.sensor.acceleration[1],
-            'acceleration_z': self.sensor.acceleration[2],
-            'magnetic_x': self.sensor.magnetic[0],
-            'magnetic_y': self.sensor.magnetic[1],
-            'magnetic_z': self.sensor.magnetic[2],
-            'gyro_x': self.sensor.gyro[0],
-            'gyro_y': self.sensor.gyro[1],
-            'gyro_z': self.sensor.gyro[2],
-            'euler_x': self.sensor.euler[0],
-            'euler_y': self.sensor.euler[1],
-            'euler_z': self.sensor.euler[2],
-            'quaternion_a': self.sensor.quaternion[0],
-            'quaternion_b': self.sensor.quaternion[1],
-            'quaternion_c': self.sensor.quaternion[2],
-            'quaternion_d': self.sensor.quaternion[3],
-            'linear_acceleration_x': self.sensor.linear_acceleration[0],
-            'linear_acceleration_y': self.sensor.linear_acceleration[1],
-            'linear_acceleration_z': self.sensor.linear_acceleration[2],
-            'gravity_x': self.sensor.gravity[0],
-            'gravity_y': self.sensor.gravity[1],
-            'gravity_z': self.sensor.gravity[2]
-        }
+#     async def get_data(self):
+#         return {
+#             'dt': now(),
+#             'acceleration_x': self.sensor.acceleration[0],
+#             'acceleration_y': self.sensor.acceleration[1],
+#             'acceleration_z': self.sensor.acceleration[2],
+#             'magnetic_x': self.sensor.magnetic[0],
+#             'magnetic_y': self.sensor.magnetic[1],
+#             'magnetic_z': self.sensor.magnetic[2],
+#             'gyro_x': self.sensor.gyro[0],
+#             'gyro_y': self.sensor.gyro[1],
+#             'gyro_z': self.sensor.gyro[2],
+#             'euler_x': self.sensor.euler[0],
+#             'euler_y': self.sensor.euler[1],
+#             'euler_z': self.sensor.euler[2],
+#             'quaternion_a': self.sensor.quaternion[0],
+#             'quaternion_b': self.sensor.quaternion[1],
+#             'quaternion_c': self.sensor.quaternion[2],
+#             'quaternion_d': self.sensor.quaternion[3],
+#             'linear_acceleration_x': self.sensor.linear_acceleration[0],
+#             'linear_acceleration_y': self.sensor.linear_acceleration[1],
+#             'linear_acceleration_z': self.sensor.linear_acceleration[2],
+#             'gravity_x': self.sensor.gravity[0],
+#             'gravity_y': self.sensor.gravity[1],
+#             'gravity_z': self.sensor.gravity[2]
+#         }
 
 
 class GSR_Grovepi(Sensor):
@@ -310,7 +306,7 @@ class GSR_Grovepi(Sensor):
 
     async def get_data(self):
         return {
-            'dt': now_ms(),
+            'dt': now(),
             'gsr': self._gsr(),
         }
 
@@ -332,13 +328,86 @@ class EMG_Olimex_x4(Sensor):
 
     async def get_data(self):
         data = self.ser.readline().decode('utf8').rstrip().split(',')
-        return {
-            'dt': now_ms(),
-            'masseter_left': data[0],
-            'masseter_right': data[1],
-            'temporalis_left': data[2],
-            'temporalis_right': data[3],
-        }
+        dt = now()
+
+        if len(data) != len(self.csv_headers) - 1:
+            logger.info(f"{self.name} serial packet length {len(data)} instead of {len(self.csv_headers)}!")
+            return {
+                'dt': dt
+            }
+
+        payload = dict(zip(self.csv_headers, data))
+        payload['dt'] = dt
+
+        return payload
 
 
-# TODO: Audio recorder (adapt implementation from the test notebook)
+class BNO055_x2(Sensor):
+    def __init__(self, name: str, baudrate: int = 115200):
+        self.ser = serial.Serial('/dev/ttyACM1', baudrate=baudrate,
+                                 parity=serial.PARITY_NONE,
+                                 stopbits=serial.STOPBITS_ONE,
+                                 bytesize=serial.EIGHTBITS, timeout=1)
+        self.ser.reset_input_buffer()
+        super().__init__(name=name, sample_rate_s=0, csv_headers=[
+            'dt',
+            'x28_euler_x',
+            'x28_euler_y',
+            'x28_euler_z',
+            'x28_gyro_x',
+            'x28_gyro_y',
+            'x28_gyro_z',
+            'x28_linear_acceleration_x',
+            'x28_linear_acceleration_y',
+            'x28_linear_acceleration_z',
+            'x28_magnetic_x',
+            'x28_magnetic_y',
+            'x28_magnetic_z',
+            'x28_acceleration_x',
+            'x28_acceleration_y',
+            'x28_acceleration_z',
+            'x28_gravity_x',
+            'x28_gravity_y',
+            'x28_gravity_z'
+            'x28_quaternion_w',
+            'x28_quaternion_x',
+            'x28_quaternion_y',
+            'x28_quaternion_z',
+            'x29_euler_x',
+            'x29_euler_y',
+            'x29_euler_z',
+            'x29_gyro_x',
+            'x29_gyro_y',
+            'x29_gyro_z',
+            'x29_linear_acceleration_x',
+            'x29_linear_acceleration_y',
+            'x29_linear_acceleration_z',
+            'x29_magnetic_x',
+            'x29_magnetic_y',
+            'x29_magnetic_z',
+            'x29_acceleration_x',
+            'x29_acceleration_y',
+            'x29_acceleration_z',
+            'x29_gravity_x',
+            'x29_gravity_y',
+            'x29_gravity_z'
+            'x29_quaternion_w',
+            'x29_quaternion_x',
+            'x29_quaternion_y',
+            'x29_quaternion_z',
+        ])
+
+    async def get_data(self):
+        data = self.ser.readline().decode('utf8').rstrip().split(',')
+        dt = now()
+
+        if len(data) != len(self.csv_headers) - 1:
+            logger.info(f"{self.name} serial packet length {len(data)} instead of {len(self.csv_headers)}!")
+            return {
+                'dt': dt
+            }
+
+        payload = dict(zip(self.csv_headers, data))
+        payload['dt'] = dt
+
+        return payload

@@ -22,7 +22,7 @@ if __name__ == '__main__':
                 file_buffer[key] = file_buffer[key] + 1
             else:
                 file_buffer[key] = 1
-            print(line)
+            # print(line)
     except KeyboardInterrupt as e:
         values_list = list(file_buffer.values())
         values_list = values_list[3:-1]
