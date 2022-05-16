@@ -25,15 +25,17 @@ class Bruxi:
         for s in self.sensors:
             await s._init()
 
+        
+
     async def halt_event_listener(self) -> None:
-        while True:
-            if self.halt_event.is_set():
-                logger.info("Halt received! Shuting down..")
-                for s in self.sensors:
-                    if not s.producer.finished_execution.is_set():
-                        s.producer.stop_producer()
-                break
-            await asyncio.sleep(10)
+        while not self.halt_event.is_set():
+            await asyncio.sleep(1)
+
+        logger.info("Halt received! Shuting down..")
+        for s in self.sensors:
+            if not s.producer.finished_execution.is_set():
+                s.producer.stop_producer()
+        logger.info("Producers stoped!")
 
     def spawn_coroutines(self) -> list:
         stream_futures = [s.start_stream() for s in self.sensors]

@@ -7,6 +7,7 @@ from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from reactor import Producer, Consumer
 from grovepi import analogRead, pinMode
+from serial_asyncio import open_serial_connection
 
 logger = getLogger("sensor")
 
@@ -20,10 +21,11 @@ def now():
 class Sensor:
     """Interface to ease the data collection"""
 
-    def __init__(self, name: str, sample_rate_s: float = 1, csv_headers: List[str] = ["dt", "column0"]):
+    def __init__(self, name: str, sample_rate_s: float = 0.01, csv_headers: List[str] = ["dt", "column0"]):
         self.name = name
         self.sample_rate_s = sample_rate_s
         self.producer = Producer()
+        self.csv_headers = csv_headers
         self.consumer = Consumer(filename=f"{self.name}.csv", queue=self.producer.queue,
                                  finished_execution=self.producer.finished_execution, csv_headers=csv_headers)
 
@@ -34,7 +36,7 @@ class Sensor:
         """
         pass
 
-    def get_data(self):
+    async def get_data(self):
         """Override this method with proper pyshical sensor read
         """
         return {
@@ -48,9 +50,10 @@ class Sensor:
         """
         while not self.producer.finished_execution.is_set():
             # Simulate N-Hz sample rate
-            await sleep(self.sample_rate_s)
+            if self.sample_rate_s > 0:
+                await sleep(self.sample_rate_s)
 
-            data = self.get_data()
+            data = await self.get_data()
 
             await self.queue(data)
 
@@ -87,33 +90,48 @@ class BLE_eSense(Sensor):
         """
         self.device = await self._find_device()
         if self.device:
-            # Connect
-            self.client = BleakClient(self.device)
-            await self.client.connect()
-            logger.info(
-                f"Connected {self.client.address}: {self.client.is_connected}")
+            should_retry = True
 
-            # Configure
-            await self.client.write_gatt_char(self.IMU_ENABLE_UUID, bytearray([0x57, 0x2d, 0x08, 0x00, 0xc8, 0x01, 0x2c, 0x00, 0x10, 0x00, 0x20]))
-            logger.info(f"Configured for 100Hz {self.client.address}")
-            logger.info(f"Disconnecting {self.client.address}")
-            await self.client.disconnect()
-            logger.info(f"Sleeping.. {self.client.address}")
-            await sleep(3)
-            await self.client.connect()
-            logger.info(
-                f"Reconnected {self.client.address}: {self.client.is_connected}")
+            while should_retry:
+                try:
+                    # Connect
+                    self.client = BleakClient(self.device)
+                    await self.client.connect()
+                    logger.info(
+                        f"Connected {self.client.address}: {self.client.is_connected}")
 
-            # Config check
-            await self._check_scale_range()
+                    # Configure
+                    await self.client.write_gatt_char(self.IMU_ENABLE_UUID, bytearray([0x57, 0x2d, 0x08, 0x00, 0xc8, 0x01, 0x2c, 0x00, 0x10, 0x00, 0x20]))
+                    logger.info(f"Configured for 100Hz {self.client.address}")
 
-            # Prepare streaming
-            await self.client.write_gatt_char(
-                self.IMU_ENABLE_UUID,
-                self._enable_imu_payload()
-            )
-            logger.info(
-                f"Enabled stream of {self.sample_rate}Hz {self.client.address}")
+                    # logger.info(f"Disconnecting {self.client.address}")
+                    # await self.client.disconnect()
+
+                    logger.info(f"Sleeping.. {self.client.address}")
+                    await sleep(3)
+
+                    # await self.client.connect()
+                    # logger.info(
+                    #     f"Reconnected {self.client.address}: {self.client.is_connected}")
+                    # await sleep(3)
+
+                    # Config check
+                    await self._check_scale_range()
+
+                    # Prepare streaming
+                    await self.client.write_gatt_char(
+                        self.IMU_ENABLE_UUID,
+                        self._enable_imu_payload()
+                    )
+
+                    logger.info(
+                        f"Enabled stream of {self.sample_rate}Hz {self.client.address}")
+                    should_retry = False
+                except Exception as e:
+                    logger.info(
+                        f"\nRETRY {self.client.address} {e} \n")
+                    should_retry = True
+            
         else:
             logger.info(f"{self.ble_device_name} not found!")
             # Kill the producer if device not available!
@@ -179,10 +197,15 @@ class BLE_eSense(Sensor):
             # Check every 10ms if stream was stopped
             await sleep(0.01)
 
-        await self.client.stop_notify(self.IMU_DATA_UUID)
-        logger.info(f"Stream stoped {self.client.address}")
-        await self.client.disconnect()
-        logger.info(f"Disconnected {self.client.address}")
+        try:
+            await self.client.stop_notify(self.IMU_DATA_UUID)
+            logger.info(f"Stream stoped {self.client.address}")
+            await self.client.disconnect()
+            logger.info(f"Disconnected {self.client.address}")
+        except Exception as e:
+            logger.info(
+                f"Error on disconnect {self.client.address} {e} \n")
+
 
     async def _find_device(self) -> BLEDevice:
         """Find device by name in the list of discovered devices.
@@ -288,7 +311,7 @@ class GSR_Grovepi(Sensor):
 
     def __init__(self, name: str, port: str = "A0"):
         self.pin = self.PORT_TO_PIN[port]
-        super().__init__(name=name, sample_rate_s=0.01, csv_headers=[
+        super().__init__(name=name, sample_rate_s=0.05, csv_headers=[
             'dt',
             'gsr'
         ])
@@ -312,12 +335,8 @@ class GSR_Grovepi(Sensor):
 
 
 class EMG_Olimex_x4(Sensor):
-    def __init__(self, name: str, baudrate: int = 115200):
-        self.ser = serial.Serial('/dev/ttyACM0', baudrate=baudrate,
-                                 parity=serial.PARITY_NONE,
-                                 stopbits=serial.STOPBITS_ONE,
-                                 bytesize=serial.EIGHTBITS, timeout=1)
-        self.ser.reset_input_buffer()
+    def __init__(self, name: str):
+        self.reader = None
         super().__init__(name=name, sample_rate_s=0, csv_headers=[
             'dt',
             'masseter_left',
@@ -326,12 +345,21 @@ class EMG_Olimex_x4(Sensor):
             'temporalis_right',
         ])
 
+    async def _init(self):
+        self.reader, _ = await open_serial_connection(url='/dev/ttyUSB0', baudrate=115200)
+
     async def get_data(self):
-        data = self.ser.readline().decode('utf8').rstrip().split(',')
+        try:
+            data = await self.reader.readline()
+            data = data.decode('utf8').rstrip().split(',')
+        except Exception as e:
+            logger.info(f"ERROR: {self.name} - {e}")
+            data = []
+
         dt = now()
 
         if len(data) != len(self.csv_headers) - 1:
-            logger.info(f"{self.name} serial packet length {len(data)} instead of {len(self.csv_headers)}!")
+            logger.info(f"{self.name} serial packet length {len(data)} instead of {len(self.csv_headers) - 1}!")
             return {
                 'dt': dt
             }
@@ -343,66 +371,46 @@ class EMG_Olimex_x4(Sensor):
 
 
 class BNO055_x2(Sensor):
-    def __init__(self, name: str, baudrate: int = 115200):
-        self.ser = serial.Serial('/dev/ttyACM1', baudrate=baudrate,
-                                 parity=serial.PARITY_NONE,
-                                 stopbits=serial.STOPBITS_ONE,
-                                 bytesize=serial.EIGHTBITS, timeout=1)
-        self.ser.reset_input_buffer()
+    def __init__(self, name: str, baudrate: int = 500000):
         super().__init__(name=name, sample_rate_s=0, csv_headers=[
             'dt',
-            'x28_euler_x',
-            'x28_euler_y',
-            'x28_euler_z',
             'x28_gyro_x',
             'x28_gyro_y',
             'x28_gyro_z',
-            'x28_linear_acceleration_x',
-            'x28_linear_acceleration_y',
-            'x28_linear_acceleration_z',
-            'x28_magnetic_x',
-            'x28_magnetic_y',
-            'x28_magnetic_z',
             'x28_acceleration_x',
             'x28_acceleration_y',
             'x28_acceleration_z',
-            'x28_gravity_x',
-            'x28_gravity_y',
-            'x28_gravity_z'
             'x28_quaternion_w',
             'x28_quaternion_x',
             'x28_quaternion_y',
             'x28_quaternion_z',
-            'x29_euler_x',
-            'x29_euler_y',
-            'x29_euler_z',
             'x29_gyro_x',
             'x29_gyro_y',
             'x29_gyro_z',
-            'x29_linear_acceleration_x',
-            'x29_linear_acceleration_y',
-            'x29_linear_acceleration_z',
-            'x29_magnetic_x',
-            'x29_magnetic_y',
-            'x29_magnetic_z',
             'x29_acceleration_x',
             'x29_acceleration_y',
             'x29_acceleration_z',
-            'x29_gravity_x',
-            'x29_gravity_y',
-            'x29_gravity_z'
             'x29_quaternion_w',
             'x29_quaternion_x',
             'x29_quaternion_y',
             'x29_quaternion_z',
         ])
 
+    async def _init(self):
+        self.reader, _ = await open_serial_connection(url='/dev/ttyUSB1', baudrate=500000)
+
     async def get_data(self):
-        data = self.ser.readline().decode('utf8').rstrip().split(',')
+        try:
+            data = await self.reader.readline()
+            data = data.decode('utf8').rstrip().split(',')
+        except Exception as e:
+            logger.info(f"ERROR: {self.name} - {e}")
+            data = []
+
         dt = now()
 
         if len(data) != len(self.csv_headers) - 1:
-            logger.info(f"{self.name} serial packet length {len(data)} instead of {len(self.csv_headers)}!")
+            logger.info(f"{self.name} serial packet length {len(data)} instead of {len(self.csv_headers) - 1}!")
             return {
                 'dt': dt
             }

@@ -4,7 +4,7 @@ import time
 MAX_PAYLOAD_LEN = 10
 
 if __name__ == '__main__':
-    ser = serial.Serial('/dev/ttyACM0', baudrate=115200,
+    ser = serial.Serial('/dev/ttyUSB0', baudrate=500000,
                         parity=serial.PARITY_NONE,
                         stopbits=serial.STOPBITS_ONE,
                         bytesize=serial.EIGHTBITS, timeout=1)

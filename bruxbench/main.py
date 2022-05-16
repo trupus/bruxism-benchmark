@@ -3,9 +3,17 @@ import asyncio
 import sys
 from sensor import *
 from bruxi import Bruxi
+import aioconsole
 
 logger = logging.getLogger(__name__)
 
+
+async def ainput(halt_event):
+    while not halt_event.is_set():
+        line = await aioconsole.ainput('')
+        if 'c' in line:
+            halt_event.set()
+        await asyncio.sleep(1)
 
 async def main(dir_name, halt_event):
     SENSORS = [
@@ -15,11 +23,10 @@ async def main(dir_name, halt_event):
         # Sensor(name="mock-s3"),
         # Sensor(name="mock-s4"),
         BLE_eSense(name="ble-left", ble_device_name="eSense-0091"),
-        # BLE_eSense(name="ble-right", ble_device_name="eSense-0398"),
-        # IMU_BNO055(name="left_imu", i2c_multiplexer_index=0),
-        # IMU_BNO055(name="right_imu", i2c_multiplexer_index=1),
-        # GSR_Grovepi(name="gsr"),
-        # EMG_Olimex_x4(name="emg")
+        BLE_eSense(name="ble-right", ble_device_name="eSense-0398"),
+        GSR_Grovepi(name="gsr"),
+        EMG_Olimex_x4(name="emg"),
+        BNO055_x2(name="bno"),
         # ...
     ]
 
@@ -30,8 +37,10 @@ async def main(dir_name, halt_event):
     await device.initialize_sensors()
     logger.info("Done.")
 
+    cli_event_handler = ainput(halt_event)
+
     logger.info("Spawning workers..")
-    await asyncio.gather(*device.spawn_coroutines())
+    await asyncio.gather(*device.spawn_coroutines(), cli_event_handler)
     logger.info("All workers exited.")
 
 
@@ -41,8 +50,4 @@ if __name__ == "__main__":
 
     dir_name = sys.argv[1]
     halt_event = asyncio.Event()
-    try:
-        asyncio.run(main(dir_name, halt_event))
-    except KeyboardInterrupt:
-        logger.info("Halt received! Shuting down..")
-        halt_event.set()
+    asyncio.run(main(dir_name, halt_event))

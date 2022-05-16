@@ -10,7 +10,7 @@ class Producer:
         self.finished_execution = Event()
 
     async def produce(self, data):
-        await self.queue.put(data)
+        self.queue.put_nowait(data)
 
     def stop_producer(self):
         self.finished_execution.set()
@@ -22,15 +22,21 @@ class Consumer:
         self.queue = queue
         self.finished_execution = finished_execution
         self.csv_headers = csv_headers
+        self.buffer = []
 
     async def consume(self):
-        while not self.finished_execution.is_set():
-            with open(f"{self.dir}/{self.filename}", 'a') as f:
-                writer = csv.writer(f)
+        with open(f"{self.dir}/{self.filename}", 'a') as f:
+            writer = csv.writer(f)
+            while not self.finished_execution.is_set():
                 # wait for an item from the producer
                 item = await self.queue.get()
+                # self.buffer.append(item.values())
                 writer.writerow(item.values())
                 self.queue.task_done()
+
+        # with open(f"{self.dir}/{self.filename}", 'a') as f:
+        #     writer = csv.writer(f)
+        #     writer.writerows(self.buffer)
 
     def set_dir_name(self, dir):
         self.dir = f"out/{self._hash_dir_name(dir)}"
