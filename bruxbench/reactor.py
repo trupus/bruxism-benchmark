@@ -1,72 +1,54 @@
-#!/usr/bin/env python
-
-import time
-import gevent
-import datetime
-from gevent import monkey
-monkey.patch_all()  # Patch everything
+import csv
+import os
+from asyncio import Queue, Event
+from datetime import datetime
 
 
-class Hub(object):
-    """A simple reactor hub... In async!"""
+class Producer:
+    def __init__(self):
+        self.queue = Queue()
+        self.finished_execution = Event()
 
-    def __init__(self, name=None):
-        self.name = name
-        self.handlers = {}
+    async def produce(self, data):
+        self.queue.put_nowait(data)
 
-    def on(self, event_name, handler):
-        """Binds an event to a function."""
-        handlers = self.handlers.get(event_name, [])
-        if not handler in handlers:
-            handlers.append(handler)
-            self.handlers[event_name] = handlers
-
-    def off(self, event_name, handler):
-        """Unbinds an event to a function."""
-        handlers = self.handlers.get(event_name, [])
-        handlers.remove(handler)
-
-    def emit(self, event_name, *args, **kwargs):
-        """Calls an event. You can also pass arguments."""
-        handlers = self.handlers.get(event_name, [])
-        for handler in handlers:
-            # XXX: If spawned within a greenlet, there's no need to join
-            # the greenlet. It is automatically executed.
-            gevent.spawn(handler, *args, **kwargs)
-
-    def start(self, *entry_points):
-        """Run entry point."""
-        gevent.joinall([gevent.spawn(ep) for ep in entry_points])
+    def stop_producer(self):
+        self.finished_execution.set()
 
 
-##
-#
-# Usage...
-#
-# Here's an example that uses redis' pub/sub feature.
-##
+class Consumer:
+    def __init__(self, filename: str, queue: Queue, finished_execution: Event, csv_headers: list):
+        self.filename = filename
+        self.queue = queue
+        self.finished_execution = finished_execution
+        self.csv_headers = csv_headers
+        self.buffer = []
 
+    async def consume(self):
+        with open(f"{self.dir}/{self.filename}", 'a') as f:
+            writer = csv.writer(f)
+            while not self.finished_execution.is_set():
+                # wait for an item from the producer
+                item = await self.queue.get()
+                # self.buffer.append(item.values())
+                writer.writerow(item.values())
+                self.queue.task_done()
 
-# Create an instance of the hub.
-hub = Hub(name='myhub')
+        # with open(f"{self.dir}/{self.filename}", 'a') as f:
+        #     writer = csv.writer(f)
+        #     writer.writerows(self.buffer)
 
+    def set_dir_name(self, dir):
+        self.dir = f"out/{self._hash_dir_name(dir)}"
+        self._init_out_file()
 
-def append(line):
-    if int(line.split(" ")[1]) == 10:
-        time.sleep(10)
-    with open("sample.txt", "a") as file_object:
-        # Append 'hello' at the end of file
-        file_object.write(f"{line}\n")
+    def _init_out_file(self):
+        if not os.path.exists(self.dir):
+            os.makedirs(self.dir)
+        with open(f"{self.dir}/{self.filename}", 'a') as f:
+            writer = csv.writer(f)
+            # write the header
+            writer.writerow(self.csv_headers)
 
-
-hub.on('data.write', append)
-
-
-def entry_point():
-    for data in [f'{i}' for i in range(10000)]:
-        hub.emit('data.write',
-                 f"{datetime.datetime.now().timestamp()*1000} {data}")
-
-
-if __name__ == '__main__':
-    hub.start(entry_point)
+    def _hash_dir_name(self, dir):
+        return f"{dir}@{datetime.now().strftime('%Y_%m_%d__%H_%M_%S')}"

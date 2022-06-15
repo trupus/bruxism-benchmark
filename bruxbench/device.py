@@ -2,7 +2,7 @@ import time
 import asyncio
 import datetime
 
-from sensor import *
+from bruxbench.sensor_old import *
 
 
 class Device:

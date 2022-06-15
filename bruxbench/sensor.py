@@ -1,93 +1,304 @@
-import adafruit_bno055
-import board
-import grovepi
-import collections
-import asyncio
+import serial
+from time import time_ns
+from logging import getLogger
+from typing import List
+from asyncio import sleep
 from bleak import BleakClient, BleakScanner
-import datetime
-import time
+from bleak.backends.device import BLEDevice
+from reactor import Producer, Consumer
+from grovepi import analogRead, pinMode
+from serial_asyncio import open_serial_connection
+
+logger = getLogger("sensor")
 
 
 def now():
-    return int(time.time_ns()/1000)
+    """Helper function to get the POSIX time in ms for the current moment
+    """
+    return time_ns()
 
 
 class Sensor:
     """Interface to ease the data collection"""
 
-    def __init__(self, name: str, buffer: collections.deque):
+    def __init__(self, name: str, sample_rate_s: float = 0.01, csv_headers: List[str] = ["dt", "column0"]):
         self.name = name
-        self.buffer = buffer
+        self.sample_rate_s = sample_rate_s
+        self.producer = Producer()
+        self.csv_headers = csv_headers
+        self.consumer = Consumer(filename=f"{self.name}.csv", queue=self.producer.queue,
+                                 finished_execution=self.producer.finished_execution, csv_headers=csv_headers)
 
-    async def read_data(self) -> dict:
-        """Should return a dict maping sensor readings with their values,
-        with sensor name as prefix:
-            {
-                imu-left_ax: 42,
-                imu-left_ay: 42,
-                imu-left_az: 137,
-                imu-left_gx: 0.8
-                ...
-            }
-        """
-        data = await self._read_data()
-        # return data
-        line = {f"{self.name}-{k}": v for k, v in data.items()}
-        return line
-
-    def buffer_data(self) -> dict:
-        pass
-
-    async def _read_data(self) -> dict:
-        """Should return a dict maping sensor readings with their values:
-            {
-                ax: 42,
-                ay: 42,
-                az: 137,
-                gx: 0.8
-                ...
-            }
+    async def _init(self):
+        """Keep the bleak BLE initialisation style
+        If there are methods to be awaited for the sensor initialization, add them here.
+        Later you can call this method in the main loop
         """
         pass
 
-
-class IMU_BNO055(Sensor):
-    """Abstract API to read data from BNO055"""
-
-    # I2C singleton interface
-    i2c = board.I2C()
-
-    def __init__(self, name: str, address: hex = 0x28):
-        self.sensor = adafruit_bno055.BNO055_I2C(self.i2c, address=address)
-        super().__init__(name)
-
-    async def _read_data(self):
+    async def get_data(self):
+        """Override this method with proper pyshical sensor read
+        """
         return {
-            'temperature': self.sensor.temperature,
-            'acceleration_x': self.sensor.acceleration[0],
-            'acceleration_y': self.sensor.acceleration[1],
-            'acceleration_z': self.sensor.acceleration[2],
-            'magnetic_x': self.sensor.magnetic[0],
-            'magnetic_y': self.sensor.magnetic[1],
-            'magnetic_z': self.sensor.magnetic[2],
-            'gyro_x': self.sensor.gyro[0],
-            'gyro_y': self.sensor.gyro[1],
-            'gyro_z': self.sensor.gyro[2],
-            'euler_x': self.sensor.euler[0],
-            'euler_y': self.sensor.euler[1],
-            'euler_z': self.sensor.euler[2],
-            'quaternion_a': self.sensor.quaternion[0],
-            'quaternion_b': self.sensor.quaternion[1],
-            'quaternion_c': self.sensor.quaternion[2],
-            'quaternion_d': self.sensor.quaternion[3],
-            'linear_acceleration_x': self.sensor.linear_acceleration[0],
-            'linear_acceleration_y': self.sensor.linear_acceleration[1],
-            'linear_acceleration_z': self.sensor.linear_acceleration[2],
-            'gravity_x': self.sensor.gravity[0],
-            'gravity_y': self.sensor.gravity[1],
-            'gravity_z': self.sensor.gravity[2],
-            'dt': now()
+            "dt": now(),
+            "column0": 42.0
         }
+
+    async def start_stream(self):
+        """Start streaming sensor data
+        Should call `self.queue(data)`
+        """
+        while not self.producer.finished_execution.is_set():
+            # Simulate N-Hz sample rate
+            if self.sample_rate_s > 0:
+                await sleep(self.sample_rate_s)
+
+            data = await self.get_data()
+
+            await self.queue(data)
+
+    async def queue(self, data):
+        """Abstraction to produce data with the producer
+        """
+        await self.producer.produce(data=data)
+
+
+class BLE_eSense(Sensor):
+    """Abstract API to read data from the eSense Earable"""
+    IMU_ENABLE_UUID = "0000ff07-0000-1000-8000-00805f9b34fb"
+    IMU_DATA_UUID = "0000ff08-0000-1000-8000-00805f9b34fb"
+    IMU_SCALE_RANGE_UUID = "0000ff0e-0000-1000-8000-00805f9b34fb"
+
+    def __init__(self, name: str, ble_device_name: str, sample_rate: int = 100):
+        self.ble_device_name = ble_device_name
+        self.sample_rate = sample_rate
+        self.client = None
+        super().__init__(name=name, csv_headers=[
+            "dt",
+            # "raw_data",
+            'acceleration_x',
+            'acceleration_y',
+            'acceleration_z',
+            'gyro_x',
+            'gyro_y',
+            'gyro_z',
+        ])
+
+    async def _init(self) -> None:
+        """Setup the eSense device. If connection was succesfull,
+        it will listen for IMU notifications
+        """
+        self.device = await self._find_device()
+        if self.device:
+            should_retry = True
+
+            while should_retry:
+                try:
+                    # Connect
+                    self.client = BleakClient(self.device)
+                    await self.client.connect()
+                    logger.info(
+                        f"Connected {self.client.address}: {self.client.is_connected}")
+
+                    # Configure
+                    await self.client.write_gatt_char(self.IMU_ENABLE_UUID, bytearray([0x57, 0x2d, 0x08, 0x00, 0xc8, 0x01, 0x2c, 0x00, 0x10, 0x00, 0x20]))
+                    logger.info(f"Configured for 100Hz {self.client.address}")
+
+                    # logger.info(f"Disconnecting {self.client.address}")
+                    # await self.client.disconnect()
+
+                    logger.info(f"Sleeping.. {self.client.address}")
+                    await sleep(3)
+
+                    # await self.client.connect()
+                    # logger.info(
+                    #     f"Reconnected {self.client.address}: {self.client.is_connected}")
+                    # await sleep(3)
+
+                    # Config check
+                    await self._check_scale_range()
+
+                    # Prepare streaming
+                    await self.client.write_gatt_char(
+                        self.IMU_ENABLE_UUID,
+                        self._enable_imu_payload()
+                    )
+
+                    logger.info(
+                        f"Enabled stream of {self.sample_rate}Hz {self.client.address}")
+                    should_retry = False
+                except Exception as e:
+                    logger.info(
+                        f"\nRETRY {self.client.address} {e} \n")
+                    should_retry = True
+            
+        else:
+            logger.info(f"{self.ble_device_name} not found!")
+            # Kill the producer if device not available!
+            self.producer.stop_producer()
+
+    async def _check_scale_range(self) -> None:
+        """The data would make 0 sens if wrong scaling factors will be used
+        """
+        scale_range = await self.client.read_gatt_char(self.IMU_SCALE_RANGE_UUID)
+        # assert for default imu scale ranges
+        assert (scale_range[3], scale_range[4], scale_range[5],
+                scale_range[6]) == (0x06, 0x08, 0x08, 0x06)
+
+    async def start_stream(self) -> None:
+        """Start streaming sensor data
+        `self.queue(data)` is being passed as a callback
+        """
+        if self.client == None:
+            return
+
+        if self.client.is_connected:
+            logger.info(f"Starting streaming.. {self.client.address}")
+            await self._start_notifications()
+
+    def _decode(self, v: bytearray) -> List[List[float]]:
+        """Transform raw data into readable accelerometer and gyroscope data
+        The resulting units are m/s^2 and deg/s respectively
+        The axis for acc and gyro are in the order `x, y, z`
+        """
+        def _from_bytes(bytes_pair):
+            return int.from_bytes(bytes_pair, 'big', signed=True)
+
+        g = [_from_bytes(v[4:6]), _from_bytes(v[6:8]), _from_bytes(v[8:10])]
+        a = [_from_bytes(v[10:12]), _from_bytes(
+            v[12:14]), _from_bytes(v[14:16])]
+
+        a = [ai / 8192 for ai in a]
+        g = [gi / 65.5 for gi in g]
+
+        return a, g
+
+    async def _queue(self, _, raw_data) -> None:
+        """Wrapper to comply with the Bleak BLE callback format
+        """
+        [[ax, ay, az], [gx, gy, gz]] = self._decode(raw_data)
+        data = {
+            "dt": now(),
+            # "raw_data": raw_data,
+            'acceleration_x': ax,
+            'acceleration_y': ay,
+            'acceleration_z': az,
+            'gyro_x': gx,
+            'gyro_y': gy,
+            'gyro_z': gz,
+        }
+        await self.queue(data)
+
+    async def _start_notifications(self) -> None:
+        """Start listen to notifications"""
+        await self.client.start_notify(self.IMU_DATA_UUID, self._queue)
+
+        while not self.producer.finished_execution.is_set():
+            # Check every 10ms if stream was stopped
+            await sleep(0.01)
+
+        try:
+            await self.client.stop_notify(self.IMU_DATA_UUID)
+            logger.info(f"Stream stoped {self.client.address}")
+            await self.client.disconnect()
+            logger.info(f"Disconnected {self.client.address}")
+        except Exception as e:
+            logger.info(
+                f"Error on disconnect {self.client.address} {e} \n")
+
+
+    async def _find_device(self) -> BLEDevice:
+        """Find device by name in the list of discovered devices.
+        If this part fails try fixes in the following order:
+            1. Restart earable (long press until red, then nothing)
+            2. Hard reset (put in the case, hold case button for 15-20s)
+            3. Power cycle rpi (on very rare ocasions)
+        """
+        devices = await BleakScanner.discover()
+        for device in devices:
+            if device.name == self.ble_device_name:
+                return device
+
+    def _enable_imu_payload(self) -> bytearray:
+        """Refer to eSense BLE specifications.
+        Flips the bit, that enables IMU data broadcast,
+        and also sets the sample rate
+        """
+        return self._imu_payload(True)
+
+    def _imu_payload(self, enable: bool) -> bytearray:
+        """Refer to eSense BLE specifications.
+        Helper function to build the required payload
+        """
+        cmd_head = 0x53
+        data_size = 0x02
+        data_enable = int(enable)
+        checksum = (data_size + data_enable + self.sample_rate) & 0xFF
+
+        return bytearray([cmd_head, checksum, data_size, data_enable, self.sample_rate])
+
+
+# class IMU_BNO055(Sensor):
+#     """Abstract API to read data from BNO055"""
+
+#     # I2C singleton interface
+#     i2c = I2C(SCL, SDA)
+#     tca = TCA9548A(i2c)
+
+#     def __init__(self, name: str, i2c_multiplexer_index: int):
+#         self.sensor = BNO055_I2C(self.tca[i2c_multiplexer_index])
+#         super().__init__(name=name, sample_rate_s=0.01, csv_headers=[
+#             'dt',
+#             'acceleration_x',
+#             'acceleration_y',
+#             'acceleration_z',
+#             'magnetic_x',
+#             'magnetic_y',
+#             'magnetic_z',
+#             'gyro_x',
+#             'gyro_y',
+#             'gyro_z',
+#             'euler_x',
+#             'euler_y',
+#             'euler_z',
+#             'quaternion_a',
+#             'quaternion_b',
+#             'quaternion_c',
+#             'quaternion_d',
+#             'linear_acceleration_x',
+#             'linear_acceleration_y',
+#             'linear_acceleration_z',
+#             'gravity_x',
+#             'gravity_y',
+#             'gravity_z'
+#         ])
+
+#     async def get_data(self):
+#         return {
+#             'dt': now(),
+#             'acceleration_x': self.sensor.acceleration[0],
+#             'acceleration_y': self.sensor.acceleration[1],
+#             'acceleration_z': self.sensor.acceleration[2],
+#             'magnetic_x': self.sensor.magnetic[0],
+#             'magnetic_y': self.sensor.magnetic[1],
+#             'magnetic_z': self.sensor.magnetic[2],
+#             'gyro_x': self.sensor.gyro[0],
+#             'gyro_y': self.sensor.gyro[1],
+#             'gyro_z': self.sensor.gyro[2],
+#             'euler_x': self.sensor.euler[0],
+#             'euler_y': self.sensor.euler[1],
+#             'euler_z': self.sensor.euler[2],
+#             'quaternion_a': self.sensor.quaternion[0],
+#             'quaternion_b': self.sensor.quaternion[1],
+#             'quaternion_c': self.sensor.quaternion[2],
+#             'quaternion_d': self.sensor.quaternion[3],
+#             'linear_acceleration_x': self.sensor.linear_acceleration[0],
+#             'linear_acceleration_y': self.sensor.linear_acceleration[1],
+#             'linear_acceleration_z': self.sensor.linear_acceleration[2],
+#             'gravity_x': self.sensor.gravity[0],
+#             'gravity_y': self.sensor.gravity[1],
+#             'gravity_z': self.sensor.gravity[2]
+#         }
 
 
 class GSR_Grovepi(Sensor):
@@ -100,99 +311,111 @@ class GSR_Grovepi(Sensor):
 
     def __init__(self, name: str, port: str = "A0"):
         self.pin = self.PORT_TO_PIN[port]
-        super().__init__(name)
-
-    def gsr(self):
-        """Reads the gsr value"""
-
-        self._setup_read()
-        return grovepi.analogRead(self.pin)
+        super().__init__(name=name, sample_rate_s=0.05, csv_headers=[
+            'dt',
+            'gsr'
+        ])
 
     def _setup_read(self):
         """Sets the grovepi+ hat board to input mode"""
 
-        grovepi.pinMode(self.pin, "INPUT")
+        pinMode(self.pin, "INPUT")
 
-    async def _read_data(self):
+    def _gsr(self):
+        """Reads the gsr value"""
 
+        self._setup_read()
+        return analogRead(self.pin)
+
+    async def get_data(self):
         return {
-            'gsr': self.gsr(),
-            'dt': now()
+            'dt': now(),
+            'gsr': self._gsr(),
         }
 
 
-class BLE_eSense(Sensor):
-    """Abstract API to read data from the eSense Earable"""
-    DEVICE_NAME_UUID = "00002a00-0000-1000-8000-00805f9b34fb"
-    IMU_ENABLE_UUID = "0000ff07-0000-1000-8000-00805f9b34fb"
-    IMU_DATA_UUID = "0000ff08-0000-1000-8000-00805f9b34fb"
-
-    def __init__(self, name: str, device_name: str, buffer: collections.deque, sample_rate: int = 50):
-        self.device_name = device_name
-        self.sample_rate = sample_rate
-        self.raw_data = None
-        super().__init__(name, buffer)
+class EMG_Olimex_x4(Sensor):
+    def __init__(self, name: str):
+        self.reader = None
+        super().__init__(name=name, sample_rate_s=0, csv_headers=[
+            'dt',
+            'masseter_left',
+            'masseter_right',
+            'temporalis_left',
+            'temporalis_right',
+        ])
 
     async def _init(self):
-        """Setup the eSense device. If connection was succesfull,
-        it will listen for IMU notifications
-        """
-        self.device = await self._find_device()
-        if (self.device):
-            self.client = BleakClient(self.device)
-            await self.client.connect()
-            await self.client.write_gatt_char(
-                self.IMU_ENABLE_UUID,
-                self._enable_imu_payload()
-            )
-            await self._start_notifications()
-        else:
-            print(f"{self.device_name} not found!")
+        self.reader, _ = await open_serial_connection(url='/dev/ttyUSB0', baudrate=115200)
 
-    async def _start_notifications(self):
-        """Start listen to notifications"""
-        await self.client.start_notify(self.IMU_DATA_UUID, self._update_raw_data)
+    async def get_data(self):
+        try:
+            data = await self.reader.readline()
+            data = data.decode('utf8').rstrip().split(',')
+        except Exception as e:
+            logger.info(f"ERROR: {self.name} - {e}")
+            data = []
 
-    async def _find_device(self):
-        """Find device by name in the list of discovered devices.
-        If this part fails try fixes in the following order:
-            1. Restart earable (long press until red, then nothing)
-            2. Hard reset (put in the case, hold case button for 15-20s)
-            3. Power cycle rpi (on very rare ocasions)
-        """
-        devices = await BleakScanner.discover()
-        for device in devices:
-            if device.name == self.device_name:
-                return device
+        dt = now()
 
-    def _enable_imu_payload(self) -> bytearray:
-        """Refer to eSense BLE specifications.
-        Flips the bit, that enables IMU data broadcast,
-        and also sets the sample rate
-        """
-        return self._imu_payload(True)
+        if len(data) != len(self.csv_headers) - 1:
+            logger.info(f"{self.name} serial packet length {len(data)} instead of {len(self.csv_headers) - 1}!")
+            return {
+                'dt': dt
+            }
 
-    def _imu_payload(self, enable: bool):
-        """Refer to eSense BLE specifications.
-        Helper function to build the required payload
-        """
-        cmd_head = 0x53
-        data_size = 0x02
-        data_enable = int(enable)
-        checksum = (data_size + data_enable + self.sample_rate) & 0xFF
+        payload = dict(zip(self.csv_headers, data))
+        payload['dt'] = dt
 
-        return bytearray([cmd_head, checksum, data_size, data_enable, self.sample_rate])
+        return payload
 
-    def _update_raw_data(self, source, data):
-        """IMU notifications handler"""
-        self.raw_data = data
 
-    async def _read_data(self):
+class BNO055_x2(Sensor):
+    def __init__(self, name: str, baudrate: int = 500000):
+        super().__init__(name=name, sample_rate_s=0, csv_headers=[
+            'dt',
+            'x28_gyro_x',
+            'x28_gyro_y',
+            'x28_gyro_z',
+            'x28_acceleration_x',
+            'x28_acceleration_y',
+            'x28_acceleration_z',
+            'x28_quaternion_w',
+            'x28_quaternion_x',
+            'x28_quaternion_y',
+            'x28_quaternion_z',
+            'x29_gyro_x',
+            'x29_gyro_y',
+            'x29_gyro_z',
+            'x29_acceleration_x',
+            'x29_acceleration_y',
+            'x29_acceleration_z',
+            'x29_quaternion_w',
+            'x29_quaternion_x',
+            'x29_quaternion_y',
+            'x29_quaternion_z',
+        ])
 
-        return {
-            'raw_data': self.raw_data,
-            'dt': now()
-        }
+    async def _init(self):
+        self.reader, _ = await open_serial_connection(url='/dev/ttyUSB1', baudrate=500000)
 
-    def buffer_data(self, source, data):
-        self.buffer.appendleft(data)
+    async def get_data(self):
+        try:
+            data = await self.reader.readline()
+            data = data.decode('utf8').rstrip().split(',')
+        except Exception as e:
+            logger.info(f"ERROR: {self.name} - {e}")
+            data = []
+
+        dt = now()
+
+        if len(data) != len(self.csv_headers) - 1:
+            logger.info(f"{self.name} serial packet length {len(data)} instead of {len(self.csv_headers) - 1}!")
+            return {
+                'dt': dt
+            }
+
+        payload = dict(zip(self.csv_headers, data))
+        payload['dt'] = dt
+
+        return payload
